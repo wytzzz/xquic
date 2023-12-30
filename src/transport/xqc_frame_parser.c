@@ -1488,7 +1488,7 @@ xqc_gen_new_conn_id_frame(xqc_packet_out_t *packet_out, xqc_cid_t *new_cid,
     *dst_buf++ = 0x18;
 
     unsigned char stateless_reset_token[XQC_STATELESS_RESET_TOKENLEN] = {0};
-
+        
     unsigned sequence_number_bits = xqc_vint_get_2bit(new_cid->cid_seq_num);
     unsigned retire_prior_to_bits = xqc_vint_get_2bit(retire_prior_to);
     uint64_t cid_len = new_cid->cid_len;

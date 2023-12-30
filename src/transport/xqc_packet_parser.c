@@ -268,6 +268,7 @@ xqc_packet_parse_short_header(xqc_connection_t *c, xqc_packet_in_t *packet_in)
     /* check dcid */
     xqc_cid_set(&(packet->pkt_dcid), pos, cid_len);
     pos += cid_len;
+    //检查did
     if (xqc_conn_check_dcid(c, &(packet->pkt_dcid)) != XQC_OK) {
         /* log & ignore, the pkt might be corrupted or stateless reset */
         xqc_log(c->log, XQC_LOG_WARN, "|parse short header|invalid destination cid, pkt dcid: %s, conn scid: %s|",
@@ -1364,6 +1365,8 @@ xqc_packet_parse_long_header(xqc_connection_t *c,
     }
 
     /* check protocol version */
+    //5.2.1 如果服务端收到一个其不支持的版本的数据包，但是该数据包的长度满足它支持的某个版本的数据包大小限制，
+    //则服务端应该（SHOULD）发送一个Version Negotiation包以开启新连接
     if (xqc_conn_version_check(c, version) != XQC_OK) {
         xqc_log(c->log, XQC_LOG_INFO, "|version not supported|v:%ui|", version);
         c->conn_flag |= XQC_CONN_FLAG_VERSION_NEGOTIATION;

@@ -1545,6 +1545,7 @@ xqc_send_ctl_on_packet_acked(xqc_send_ctl_t *send_ctl,
         }
 
         /* TODO: fix NEW_CID_RECEIVED */
+        //_NEW_CID frame被应答。
         if (packet_out->po_frame_types & XQC_FRAME_BIT_NEW_CONNECTION_ID) {
             packet_out->po_frame_types &= ~XQC_FRAME_BIT_NEW_CONNECTION_ID;
             conn->conn_flag |= XQC_CONN_FLAG_NEW_CID_ACKED;

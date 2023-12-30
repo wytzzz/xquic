@@ -370,7 +370,8 @@ xqc_conn_init_trans_settings(xqc_connection_t *conn)
     ls->max_idle_timeout = conn->conn_settings.idle_time_out;
 
     ls->max_udp_payload_size = XQC_CONN_MAX_UDP_PAYLOAD_SIZE;
-
+    
+    //5.1.1 终端使用active_connection_id_limit传输参数通告他们愿意维护的活动CID的数量
     ls->active_connection_id_limit = XQC_CONN_ACTIVE_CID_LIMIT;
 
     ls->enable_multipath = conn->conn_settings.enable_multipath;
@@ -919,7 +920,8 @@ xqc_conn_server_create(xqc_engine_t *engine, const struct sockaddr *local_addr,
     }
 
     xqc_log(engine->log, XQC_LOG_DEBUG, "|server accept new conn|");
-
+    
+    //5.2.2 如果服务端拒绝接受新连接，它应该（SHOULD）发送一个Initial包，其中包含一个错误码为CONNECTION_REFUSED的CONNECTION_CLOSE帧
     if (conn->transport_cbs.server_accept) {
         if (conn->transport_cbs.server_accept(engine, conn, &conn->scid_set.user_scid, user_data) < 0) {
             xqc_log(engine->log, XQC_LOG_ERROR, "|server_accept callback return error|");
@@ -3754,6 +3756,7 @@ xqc_conn_record_single(xqc_connection_t *c, xqc_packet_in_t *packet_in)
 }
 
 
+//xquic在连接握手时确认目的连接ID(DCID)的逻辑xqc_conn_confirm_cid
 xqc_int_t
 xqc_conn_confirm_cid(xqc_connection_t *c, xqc_packet_t *pkt)
 {
@@ -3764,10 +3767,13 @@ xqc_conn_confirm_cid(xqc_connection_t *c, xqc_packet_t *pkt)
      */
 
     xqc_int_t ret;
-
+    
+    //判断DCID是否已确认。
     if (!(c->conn_flag & XQC_CONN_FLAG_DCID_OK)) {
-
+        
+        //如果未确认,检查SCID是否在自身的DCID集合中。
         if (xqc_cid_in_cid_set(&c->dcid_set.cid_set, &pkt->pkt_scid) == NULL) {
+            //不在则插入DCID集合,标记为USED。
             ret = xqc_cid_set_insert_cid(&c->dcid_set.cid_set, &pkt->pkt_scid, XQC_CID_USED,
                                          c->local_settings.active_connection_id_limit);
             if (ret != XQC_OK) {
@@ -3778,7 +3784,9 @@ xqc_conn_confirm_cid(xqc_connection_t *c, xqc_packet_t *pkt)
                 return ret;
             }
         }
-
+            
+        //如果包中的SCID与当前DCID不等,表示DCID需要改变。
+        //更新当前DCID为SCID,更新初始路径DCID
         if (XQC_OK != xqc_cid_is_equal(&c->dcid_set.current_dcid, &pkt->pkt_scid)) {
             xqc_log(c->log, XQC_LOG_INFO, "|dcid change|ori:%s|new:%s|", 
                     xqc_dcid_str(&c->dcid_set.current_dcid), xqc_scid_str(&pkt->pkt_scid));
@@ -3795,7 +3803,7 @@ xqc_conn_confirm_cid(xqc_connection_t *c, xqc_packet_t *pkt)
             xqc_log(c->log, XQC_LOG_ERROR, "|insert conn hash error");
             return -XQC_EMALLOC;
         }
-
+        //标记DCID已确认。
         c->conn_flag |= XQC_CONN_FLAG_DCID_OK;
     }
 
@@ -3893,6 +3901,8 @@ xqc_conn_validate_address(xqc_connection_t *c, xqc_packet_in_t *pi)
 }
 
 
+//在initial阶段将对端的scid更新为自身的did
+//因为如果能成功解码,就可以理解诶为scid经过了校验.
 xqc_int_t
 xqc_conn_on_initial_processed(xqc_connection_t *c, xqc_packet_in_t *pi, xqc_usec_t now)
 {
@@ -4211,7 +4221,9 @@ xqc_conn_destroy_cids(xqc_connection_t *conn)
 xqc_int_t
 xqc_conn_try_add_new_conn_id(xqc_connection_t *conn, uint64_t retire_prior_to)
 {
+    //计算当前已激活的CID数量active_cid_cnt。
     uint64_t active_cid_cnt = conn->scid_set.cid_set.unused_cnt + conn->scid_set.cid_set.used_cnt;
+    //计算允许的未使用CID数量上限unused_limit,启用多路径时为2,否则为1。
 #ifdef XQC_NO_PID_PACKET_PROCESS
     uint64_t unused_limit = 1;
 #else
@@ -4220,15 +4232,19 @@ xqc_conn_try_add_new_conn_id(xqc_connection_t *conn, uint64_t retire_prior_to)
         unused_limit = xqc_max(unused_limit, conn->conn_settings.least_available_cid_count);
     }
 #endif
+    //如果连接已握手确认,且激活CID数<对端限制,且未使用CID数<上限
     if (xqc_conn_is_handshake_confirmed(conn)) {
         while (active_cid_cnt < conn->remote_settings.active_connection_id_limit
                && conn->scid_set.cid_set.unused_cnt < unused_limit) 
         {
+            //调用xqc_write_new_conn_id_frame_to_packet写入NEW_CONNECTION_ID帧
             xqc_int_t ret = xqc_write_new_conn_id_frame_to_packet(conn, retire_prior_to);
             if (ret != XQC_OK) {
                 xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_write_new_conn_id_frame_to_packet error|");
                 return ret;
             }
+            //每成功写入,激活CID数量增加1。
+            //直到激活CID达到限制或未使用CID达到上限。
             active_cid_cnt++;
         }
     }
@@ -4363,7 +4379,8 @@ xqc_conn_check_dcid(xqc_connection_t *conn, xqc_cid_t *dcid)
     if (scid == NULL) {
         return -XQC_ECONN_CID_NOT_FOUND;
     }
-
+    
+    //允许使用ununsed状态的cid,并转化为used
     if (scid->state == XQC_CID_UNUSED) {
         ret = xqc_cid_switch_to_next_state(&conn->scid_set.cid_set, scid, XQC_CID_USED);
         if (ret < 0) {

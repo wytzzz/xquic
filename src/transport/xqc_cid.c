@@ -167,6 +167,8 @@ xqc_destroy_cid_set(xqc_cid_set_t *cid_set)
     xqc_init_cid_set(cid_set);
 }
 
+
+//更新cid
 xqc_int_t
 xqc_cid_set_insert_cid(xqc_cid_set_t *cid_set, xqc_cid_t *cid, xqc_cid_state_t state, uint64_t limit)
 {
@@ -298,7 +300,8 @@ xqc_get_unused_cid(xqc_cid_set_t *cid_set, xqc_cid_t *cid)
 
     xqc_list_for_each_safe(pos, next, &cid_set->list_head) {
         inner_cid = xqc_list_entry(pos, xqc_cid_inner_t, list);
-
+        
+        //更新cid的状态为used
         if (inner_cid->state == XQC_CID_UNUSED) {
             xqc_cid_copy(cid, &inner_cid->cid);
             return xqc_cid_switch_to_next_state(cid_set, inner_cid, XQC_CID_USED);

@@ -11,6 +11,12 @@
 
 #define XQC_DEFAULT_CID_LEN 8
 
+/*
+UNUSED - 未使用CID
+USED - 已在使用CID
+RETIRED - 已退役CID
+REMOVED - 已移除CID
+*/
 typedef enum {
     XQC_CID_UNUSED, 
     XQC_CID_USED,
@@ -34,6 +40,15 @@ typedef struct xqc_cid_set_s {
     uint64_t          retired_cnt;
 } xqc_cid_set_t;
 
+/*
+在QUIC连接中,客户端和服务端协商一个初始的SCID用于连接识别。
+之后双方可以通过NEW_CONNECTION_ID帧动态提供和更新SCID。
+cid_set字段就记录了所有获得的SCID集合信息。
+user_scid表示当前在使用的SCID,
+largest_scid_seq_num代表集合中最大序号的SCID。
+original_scid_str保存最初的SCID值,用于定位连接等信息。
+所以xqc_scid_set_t保存了SCID的所有相关状态,用于QUIC在CID迁移和管理方面
+*/
 typedef struct xqc_scid_set_s {
     xqc_cid_t         user_scid; /* one of the USED SCIDs, for create/close notify */
     xqc_cid_set_t     cid_set;   /* a set of SCID, includes used/unused/retired SCID */
@@ -41,6 +56,15 @@ typedef struct xqc_scid_set_s {
     unsigned char     original_scid_str[XQC_MAX_CID_LEN * 2 + 1];
 } xqc_scid_set_t;
 
+/*
+在QUIC连接中,服务端分配初始的DCID用于连接识别。
+之后双方可以通过NEW_CONNECTION_ID帧动态更新DCID。
+cid_set字段记录了所有获得的DCID集合信息。
+current_dcid表示当前正在使用的DCID。
+largest_retire_prior_to表示可以安全退役之前的最大DCID序号。
+current_dcid_str保存当前DCID值,用于相关处理。
+所以xqc_dcid_set_t保存了DCID的所有相关状态,用于QUIC在CID管理方面的处理
+*/
 typedef struct xqc_dcid_set_s {
     xqc_cid_t         current_dcid; /* one of the USED DCIDs, for send packets */
     xqc_cid_set_t     cid_set;      /* a set of DCID, includes used/unused/retired DCID */

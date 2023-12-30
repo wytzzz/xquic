@@ -256,7 +256,10 @@ xqc_write_packet_header(xqc_connection_t *conn, xqc_packet_out_t *packet_out)
                                           conn->dcid_set.current_dcid.cid_buf, conn->dcid_set.current_dcid.cid_len,
                                           XQC_PKTNO_BITS, packet_out->po_pkt.pkt_num,
                                           conn->key_update_ctx.cur_out_key_phase);
-
+    
+    //5.1.1 
+    //在握手期间，终端发出的长包头（第17.2节）的SCID字段中会携带初始CID，
+    //其序号为0，如果在传输参数中也携带了preferred_address CID，则该CID的序号为1。
     } else if (pkt_type != XQC_PTYPE_SHORT_HEADER && packet_out->po_used_size == 0) {
         ret = xqc_gen_long_packet_header(packet_out,
                                          conn->dcid_set.current_dcid.cid_buf, conn->dcid_set.current_dcid.cid_len,
@@ -1203,7 +1206,9 @@ xqc_write_new_conn_id_frame_to_packet(xqc_connection_t *conn, uint64_t retire_pr
     uint8_t             sr_token[XQC_STATELESS_RESET_TOKENLEN];
 
     /* only reserve bits for server side */
+    //增加SCID序号largest_scid_seq_num。
     ++conn->scid_set.largest_scid_seq_num;
+    //生成新的SCID和stateless reset token。
     if (XQC_OK != xqc_generate_cid(conn->engine, &conn->scid_set.user_scid, &new_conn_cid,
                                    conn->scid_set.largest_scid_seq_num))
     {
@@ -1217,6 +1222,7 @@ xqc_write_new_conn_id_frame_to_packet(xqc_connection_t *conn, uint64_t retire_pr
                         conn->engine->config->reset_token_keylen);
 
     /* insert to scid_set & add scid_unused_cnt */
+    //将新SCID插入SCID集合,增加unused计数
     ret = xqc_cid_set_insert_cid(&conn->scid_set.cid_set, &new_conn_cid, XQC_CID_UNUSED,
                                  conn->remote_settings.active_connection_id_limit);
     if (ret != XQC_OK) {
@@ -1226,20 +1232,23 @@ xqc_write_new_conn_id_frame_to_packet(xqc_connection_t *conn, uint64_t retire_pr
                 conn->scid_set.cid_set.unused_cnt, conn->scid_set.cid_set.used_cnt);
         return ret;
     }
-
+    
+    //将新SCID插入连接哈希表
     ret = xqc_insert_conns_hash(conn->engine->conns_hash, conn,
                                 new_conn_cid.cid_buf, new_conn_cid.cid_len);
     if (ret < 0) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|insert new_cid into conns_hash failed|");
         return ret;
     }
-
+    
+    //创建SHORT包用于写入帧。
     packet_out = xqc_write_new_packet(conn, XQC_PTYPE_SHORT_HEADER);
     if (packet_out == NULL) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_write_new_packet error|");
         return -XQC_EWRITE_PKT;
     }
-
+    
+    //生成NEW_CONNECTION_ID帧写入该包。
     ret = xqc_gen_new_conn_id_frame(packet_out, &new_conn_cid, retire_prior_to,
                                     sr_token);
     if (ret < 0) {
@@ -1251,7 +1260,7 @@ xqc_write_new_conn_id_frame_to_packet(xqc_connection_t *conn, uint64_t retire_pr
     xqc_log(conn->log, XQC_LOG_DEBUG, "|gen_new_scid|cid:%s|sr_token:%s|seq_num:%ui",
             xqc_scid_str(&new_conn_cid), xqc_sr_token_str(new_conn_cid.sr_token),
             new_conn_cid.cid_seq_num);
-
+    //将包插入高优先级发送队列。
     xqc_send_queue_move_to_high_pri(&packet_out->po_list, conn->conn_send_queue);
     return XQC_OK;
 
@@ -1266,7 +1275,8 @@ xqc_write_retire_conn_id_frame_to_packet(xqc_connection_t *conn, uint64_t seq_nu
 {
     xqc_int_t ret = XQC_ERROR;
 
-	/* select new current_dcid to replace the cid to be retired */		
+	/* select new current_dcid to replace the cid to be retired */	
+    //如果要退役的CID是当前使用的DCID,需要先获取一个新的未使用DCID
     if (seq_num == conn->dcid_set.current_dcid.cid_seq_num) {	
         // TODO: DCID changes	
         ret = xqc_get_unused_cid(&conn->dcid_set.cid_set, &conn->dcid_set.current_dcid);		
@@ -1278,13 +1288,13 @@ xqc_write_retire_conn_id_frame_to_packet(xqc_connection_t *conn, uint64_t seq_nu
     }		
     xqc_log(conn->log, XQC_LOG_DEBUG, "|get_new_dcid:%s|seq_num:%ui|",		
             xqc_dcid_str(&conn->dcid_set.current_dcid), conn->dcid_set.current_dcid.cid_seq_num);
-
+    
     xqc_packet_out_t *packet_out = xqc_write_new_packet(conn, XQC_PTYPE_SHORT_HEADER);
     if (packet_out == NULL) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_write_new_packet error|");
         return -XQC_EWRITE_PKT;
     }
-
+    //调用xqc_gen_retire_conn_id_frame生成RETIRE_CONNECTION_ID帧写入数据包。
     ret = xqc_gen_retire_conn_id_frame(packet_out, seq_num);
     if (ret < 0) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_gen_retire_conn_id_frame error|");

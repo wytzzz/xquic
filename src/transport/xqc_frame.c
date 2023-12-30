@@ -760,7 +760,8 @@ xqc_process_new_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in
 
     xqc_log(conn->log, XQC_LOG_DEBUG, "|new_conn_id|%s|sr_token:%s",
             xqc_scid_str(&new_conn_cid), xqc_sr_token_str(new_conn_cid.sr_token));
-
+    
+    //非法行为
     if (retire_prior_to > new_conn_cid.cid_seq_num) {
         /*
          * The Retire Prior To field MUST be less than or equal to the Sequence Number field.
@@ -774,7 +775,9 @@ xqc_process_new_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in
     }
 
     /* TODO: write_retire_conn_id_frame 可能涉及到 替换 path.dcid (当前无 retire_prior_to 因此不涉及) */
-
+    //其核心目的是收到重复的连接ID时及时发送退役帧,避免连接ID重复使用导致的安全风险。
+    //如果 NEW_CONNECTION_ID 的序号小于最大退役序号,表示这个连接ID应该已经被退役了。
+    
     if (new_conn_cid.cid_seq_num < conn->dcid_set.largest_retire_prior_to) {
         /*
          * An endpoint that receives a NEW_CONNECTION_ID frame with a sequence number smaller
@@ -784,7 +787,9 @@ xqc_process_new_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in
          */
         xqc_log(conn->log, XQC_LOG_DEBUG, "|seq_num:%ui smaller than largest_retire_prior_to:%ui|",
                 new_conn_cid.cid_seq_num, conn->dcid_set.largest_retire_prior_to);
-
+        
+        //需要发送对应的 RETIRE_CONNECTION_ID 帧退役这个连接ID,否则重复使用已退役的连接ID会引起安全问题。
+        //调用 xqc_write_retire_conn_id_frame_to_packet 写入 RETIRE_CONNECTION_ID 帧
         ret = xqc_write_retire_conn_id_frame_to_packet(conn, new_conn_cid.cid_seq_num);
         if (ret != XQC_OK) {
             xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_write_retire_conn_id_frame_to_packet error|");
@@ -793,20 +798,27 @@ xqc_process_new_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in
 
         return XQC_OK;
     }
-
+    
+    
+    //比较新FRAME的Retire Prior To和原有的largest_retire_prior_to。
+    //如果新的值更大,表示需要退役更早之前的CID。
+    //5.1.2 在接收到内含增长的Retire Prior To字段的NEW_CONNECTION_ID帧后，在将新提供的CID添加到活动CID集合之前，
+    //对端必须（MUST）停用相应的CID并通过发送RETIRE_CONNECTION_ID帧通知对方
     if (retire_prior_to > conn->dcid_set.largest_retire_prior_to) {
         /*
          * Upon receipt of an increased Retire Prior To field, the peer MUST stop using the
          * corresponding connection IDs and retire them with RETIRE_CONNECTION_ID frames before
          * adding the newly provided connection ID to the set of active connection IDs.
          */
-
+        
+        //遍历所有CID,找出序号在两者之间的CID。
         xqc_list_for_each_safe(pos, next, &conn->dcid_set.cid_set.list_head) {
             inner_cid = xqc_list_entry(pos, xqc_cid_inner_t, list);
             uint64_t seq_num = inner_cid->cid.cid_seq_num;
             if ((inner_cid->state == XQC_CID_UNUSED || inner_cid->state == XQC_CID_USED)
                  && (seq_num >= conn->dcid_set.largest_retire_prior_to && seq_num < retire_prior_to))
             {
+                //对这些CID逐个发送RETIRE_CONNECTION_ID帧进行退役。
                 ret = xqc_write_retire_conn_id_frame_to_packet(conn, seq_num);
                 if (ret != XQC_OK) {
                     xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_write_retire_conn_id_frame_to_packet error|");
@@ -814,13 +826,15 @@ xqc_process_new_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in
                 }
             }
         }
-
+        
+        //更新largest_retire_prior_to为新值。
         conn->dcid_set.largest_retire_prior_to = retire_prior_to;
         xqc_log(conn->log, XQC_LOG_DEBUG, "|retire_prior_to|%ui|increase to|%ui|",
                 conn->dcid_set.largest_retire_prior_to, retire_prior_to);
     }
 
     /* store dcid & add unused_dcid_count */
+  
     if (xqc_cid_in_cid_set(&conn->dcid_set.cid_set, &new_conn_cid) != NULL) {
         return XQC_OK;
     }
@@ -845,7 +859,8 @@ xqc_process_new_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in
                 "|insert new_cid into conns_hash_sr_token failed|");
         return ret;
     }
-
+    
+    //最后加入新的CID。
     ret = xqc_cid_set_insert_cid(&conn->dcid_set.cid_set, &new_conn_cid, XQC_CID_UNUSED, conn->local_settings.active_connection_id_limit);
     if (ret != XQC_OK) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_cid_set_insert_cid error|limit:%ui|unused:%ui|used:%ui|",
@@ -857,19 +872,22 @@ xqc_process_new_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in
     return XQC_OK;
 }
 
+
 xqc_int_t
 xqc_process_retire_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
 {
     xqc_int_t ret = XQC_ERROR;
     uint64_t seq_num;
-
+    
+    //解析帧,获取SEQUENCE_NUMBER。
     ret = xqc_parse_retire_conn_id_frame(packet_in, &seq_num);
     if (ret != XQC_OK) {
         xqc_log(conn->log, XQC_LOG_ERROR,
                 "|xqc_parse_retire_conn_id_frame error|");
         return ret;
     }
-
+    
+    //检查序号是否大于本地最大序号,如果是则是协议违规。
     if (seq_num > conn->scid_set.largest_scid_seq_num) {
         /* 
          * Receipt of a RETIRE_CONNECTION_ID frame containing a sequence number
@@ -880,13 +898,14 @@ xqc_process_retire_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet
         XQC_CONN_ERR(conn, TRA_PROTOCOL_VIOLATION);
         return -XQC_EPROTO;
     }
-
+    
+    //根据序号获取对应的CID对象。
     xqc_cid_inner_t *inner_cid = xqc_get_inner_cid_by_seq(&conn->scid_set.cid_set, seq_num);
     if (inner_cid == NULL) {
         xqc_log(conn->log, XQC_LOG_DEBUG, "|can't find scid with seq_num:%ui|", seq_num);
         return XQC_OK;
     }
-
+    //检查是否退役当前包的DCID,如果是则是协议违规。
     if (XQC_OK == xqc_cid_is_equal(&inner_cid->cid, &packet_in->pi_pkt.pkt_dcid)) {
         /* 
          * The sequence number specified in a RETIRE_CONNECTION_ID frame MUST NOT refer to
@@ -897,7 +916,8 @@ xqc_process_retire_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet
         XQC_CONN_ERR(conn, TRA_PROTOCOL_VIOLATION);
         return -XQC_EPROTO;
     }
-
+    
+    //设置CID状态为已退役,更新时间戳。
     ret = xqc_conn_set_cid_retired_ts(conn, inner_cid);
     if (ret != XQC_OK) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_conn_set_cid_retired_ts error|");
@@ -905,6 +925,7 @@ xqc_process_retire_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet
     }
 
     /* update SCID */
+    //如果retired的是当前正在使用的uid,则切换为其他CID
     if (XQC_OK == xqc_cid_is_equal(&conn->scid_set.user_scid, &inner_cid->cid)) {
         ret = xqc_conn_update_user_scid(conn, &conn->scid_set);
         if (ret != XQC_OK) {

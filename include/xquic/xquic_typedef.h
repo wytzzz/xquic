@@ -120,6 +120,13 @@ typedef uint8_t         xqc_bool_t;
 /* length of stateless reset token */
 #define XQC_STATELESS_RESET_TOKENLEN    16
 
+
+/*
+cid_len: CID长度
+cid_buf: 存储CID值的字节数组
+cid_seq_num: CID序列号,用于标识CID的创建顺序
+sr_token: 无状态重置令牌,用于验证CID ownership
+*/
 typedef struct xqc_cid_s {
     uint8_t             cid_len;
     uint8_t             cid_buf[XQC_MAX_CID_LEN];

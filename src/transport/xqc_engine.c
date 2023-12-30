@@ -682,10 +682,12 @@ xqc_engine_process_conn(xqc_connection_t *conn, xqc_usec_t now)
 
     int ret;
     xqc_bool_t wait_scid, wait_dcid;
-
+    
+    //处理连接定时器超时。
     xqc_conn_timer_expire(conn, now);
 
     /* notify closing event as soon as possible */
+    //检查连接是否关闭。
     xqc_conn_closing_notify(conn);
 
     if (XQC_UNLIKELY(conn->conn_flag & XQC_CONN_FLAG_TIME_OUT)) {
@@ -707,20 +709,22 @@ xqc_engine_process_conn(xqc_connection_t *conn, xqc_usec_t now)
     if (XQC_UNLIKELY(conn->conn_state >= XQC_CONN_STATE_CLOSING)) {
         goto end;
     }
-
+    
+    //处理加密读写流。
     XQC_CHECK_UNDECRYPT_PACKETS();
     xqc_process_crypto_read_streams(conn);
     XQC_CHECK_UNDECRYPT_PACKETS();
     xqc_process_crypto_write_streams(conn);
     XQC_CHECK_UNDECRYPT_PACKETS();
     XQC_CHECK_IMMEDIATE_CLOSE();
-
+    
+    //写入缓存的1-RTT数据包。
     if (XQC_UNLIKELY(!xqc_list_empty(&conn->conn_send_queue->sndq_buff_1rtt_packets)
         && conn->conn_flag & XQC_CONN_FLAG_CAN_SEND_1RTT)) {
         xqc_conn_write_buffed_1rtt_packets(conn);
     }
     XQC_CHECK_IMMEDIATE_CLOSE();
-
+    //处理普通读写流。
     if (conn->conn_flag & XQC_CONN_FLAG_CAN_SEND_1RTT) {
         xqc_process_read_streams(conn);
         if (xqc_send_queue_can_write(conn->conn_send_queue)) {
@@ -744,7 +748,8 @@ xqc_engine_process_conn(xqc_connection_t *conn, xqc_usec_t now)
         }
     }
     XQC_CHECK_IMMEDIATE_CLOSE();
-
+    
+    //写入ACK帧
     if (conn->ack_flag) {
         ret = xqc_write_ack_or_mp_ack_to_packets(conn);
         if (ret) {
@@ -755,7 +760,8 @@ xqc_engine_process_conn(xqc_connection_t *conn, xqc_usec_t now)
     
     XQC_CHECK_IMMEDIATE_CLOSE();
 
-
+    
+    //尝试添加新的CID。
     ret = xqc_conn_try_add_new_conn_id(conn, 0);
     if (ret) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_conn_try_add_new_conn_id error|");
@@ -780,6 +786,7 @@ xqc_engine_process_conn(xqc_connection_t *conn, xqc_usec_t now)
     }
 
     /* for multi-path */
+    //多路径就绪通知。
     if ((conn->conn_flag & XQC_CONN_FLAG_MP_READY_NOTIFY)
         && xqc_conn_check_unused_cids(conn) == XQC_OK)
     {
@@ -789,7 +796,8 @@ xqc_engine_process_conn(xqc_connection_t *conn, xqc_usec_t now)
         }
         conn->conn_flag &= ~XQC_CONN_FLAG_MP_READY_NOTIFY;
     }
-
+    
+    //发送PING帧。
     if (XQC_UNLIKELY(conn->conn_flag & XQC_CONN_FLAG_PING)) {
         ret = xqc_conn_send_ping_internal(conn, NULL, XQC_FALSE);
         if (ret) {
@@ -798,7 +806,8 @@ xqc_engine_process_conn(xqc_connection_t *conn, xqc_usec_t now)
         }
     }
     XQC_CHECK_IMMEDIATE_CLOSE();
-
+    
+    //发送版本协商。
     /* server send version negotiation */
     if (XQC_UNLIKELY(conn->conn_flag & XQC_CONN_FLAG_VERSION_NEGOTIATION)) {
         ret = xqc_conn_send_version_negotiation(conn);
@@ -808,11 +817,13 @@ xqc_engine_process_conn(xqc_connection_t *conn, xqc_usec_t now)
     }
 
     /* PMTUD probing */
+    //PMTUD探测。
     if (XQC_UNLIKELY(conn->conn_flag & XQC_CONN_FLAG_PMTUD_PROBING)) {
         xqc_conn_ptmud_probing(conn);
     }
 
 end:
+    //清理状态位。
     conn->packet_need_process_count = 0;
     conn->conn_flag &= ~XQC_CONN_FLAG_NEED_RUN;
     return;
