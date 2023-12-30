@@ -132,6 +132,7 @@ xqc_stream_maybe_need_close(xqc_stream_t *stream)
         }
         stream->stream_close_time = new_expire;
         xqc_list_add_tail(&stream->closing_stream_list, &stream->stream_conn->conn_closing_streams);
+        //关闭读写方向的。
         xqc_stream_shutdown_read(stream);
         xqc_stream_shutdown_write(stream);
     }
@@ -316,6 +317,8 @@ xqc_stream_get_init_max_stream_data(xqc_stream_t *stream)
     }
 }
 
+//4.1  如果发送方已发送数据达到限额，则将无法发送新数据并被视为阻塞，
+//发送方应该（SHOULD）发送一个STREAM_DATA_BLOCKED或DATA_BLOCKED帧来向接收方表明它有数据要写入但被流控限额阻塞。
 int
 xqc_stream_do_send_flow_ctl(xqc_stream_t *stream)
 {
@@ -335,6 +338,7 @@ xqc_stream_do_send_flow_ctl(xqc_stream_t *stream)
     }
 
     /* stream level */
+  
     if (stream->stream_send_offset + stream->stream_conn->pkt_out_size > stream->stream_flow_ctl.fc_max_stream_data_can_send) {
         xqc_log(stream->stream_conn->log, XQC_LOG_INFO, "|xqc_stream_send|exceed max_stream_data:%ui|",
                 stream->stream_flow_ctl.fc_max_stream_data_can_send);
@@ -450,15 +454,20 @@ xqc_stream_do_recv_flow_ctl(xqc_stream_t *stream)
 int
 xqc_stream_do_create_flow_ctl(xqc_connection_t *conn, xqc_stream_id_t stream_id, xqc_stream_type_t stream_type)
 {
+
+    //判断流ID是否已定义,未定义表示发送端创建。
     if (stream_id == XQC_UNDEFINE_STREAM_ID) { /* sending part */
+    //根据流类型检查可发送流数量是否超限。
         if (stream_type == XQC_CLI_BID || stream_type == XQC_SVR_BID) {
             if (conn->cur_stream_id_bidi_local >= conn->conn_flow_ctl.fc_max_streams_bidi_can_send) {
-                xqc_log(conn->log, XQC_LOG_ERROR, "|exceed max_streams_bidi_can_send:%ui|",
+                xqc_log(conn->logr, XQC_LOG_ERROR, "|exceed max_streams_bidi_can_send:%ui|",
                         conn->conn_flow_ctl.fc_max_streams_bidi_can_send);
+                //如果超限,写入STREAMS_BLOCKED帧告知对端,返回错误。
                 xqc_write_streams_blocked_to_packet(conn, conn->conn_flow_ctl.fc_max_streams_bidi_can_send, 1);
                 return -XQC_EPROTO;
             }
-
+        
+        //如果超限,写入STREAMS_BLOCKED帧告知对端,返回错误。
         } else {
             if (conn->cur_stream_id_uni_local >= conn->conn_flow_ctl.fc_max_streams_uni_can_send) {
                 xqc_log(conn->log, XQC_LOG_ERROR, "|exceed max_streams_uni_can_send:%ui|",
@@ -467,10 +476,13 @@ xqc_stream_do_create_flow_ctl(xqc_connection_t *conn, xqc_stream_id_t stream_id,
                 return -XQC_EPROTO;
             }
         }
-
+    //如果流ID已定义,表示接收端。
     } else { /* receiving part */
         stream_type = xqc_get_stream_type(stream_id);
+        //根据流类型和ID检查可接收流数量是否超限。
         if (stream_type == XQC_CLI_BID || stream_type == XQC_SVR_BID) {
+            //4.6 终端不得（MUST NOT）超过其对端设置的限制。接收到流ID超过其发送限制的帧的终端必须（MUST）将此视为STREAM_LIMIT_ERROR类型的连接错误，
+            //本端可以限制对端可以打开的传入流的累积数量，只能打开流ID小于 (max_streams * 4 + first_stream_id_of_type)的流
             if (stream_id >= 4 * conn->conn_flow_ctl.fc_max_streams_bidi_can_recv + stream_type) {
                 xqc_log(conn->log, XQC_LOG_ERROR, "|exceed max_streams_bidi_can_recv:%ui|",
                         conn->conn_flow_ctl.fc_max_streams_bidi_can_recv);
@@ -478,8 +490,10 @@ xqc_stream_do_create_flow_ctl(xqc_connection_t *conn, xqc_stream_id_t stream_id,
                 return -XQC_EPROTO;
             }
             /* increase max streams */
+            //如果接近可接收流数量限制的一半,提前增加可接收流数量。
             if ((stream_id >> 2) >= conn->conn_flow_ctl.fc_max_streams_bidi_can_recv / 2) {
                 conn->conn_flow_ctl.fc_max_streams_bidi_can_recv += conn->local_settings.max_streams_bidi;
+                //写入MAX_STREAMS帧告知对端
                 xqc_write_max_streams_to_packet(conn, conn->conn_flow_ctl.fc_max_streams_bidi_can_recv, 1);
             }
 
@@ -1381,7 +1395,9 @@ xqc_stream_send(xqc_stream_t *stream, unsigned char *send_data, size_t send_data
     }
 
     while (offset < send_data_size || fin_only) {
-
+            
+        //。如果发送方被阻塞的时间长于空闲超时定时器（第10.1节），即使发送方有可用于传输的数据，接收方也可能关闭连接
+        //。为了防止连接关闭，受流控阻塞的发送方应该（SHOULD）在没有ACK触发包数据包传输时定期发送
         if (pkt_type == XQC_PTYPE_SHORT_HEADER) {
             ret = xqc_stream_do_send_flow_ctl(stream);
             if (ret) {

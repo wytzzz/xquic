@@ -28,22 +28,19 @@ typedef enum {
 } xqc_stream_type_t;
 
 
-/**
- * 
-create_time: 流创建时间
-peer_fin_rcv_time: 接收到对端FIN时间
-peer_fin_read_time: 应用读取到对端FIN时间
-local_fin_write_time: 应用发送FIN时间
-local_fin_snd_time: 发送FIN到socket时间
-first_write_time: 应用首次发送数据时间
-first_snd_time: 首次发送数据到socket时间
-first_fin_ack_time: 收到对端对FIN的ACK时间
-all_data_acked_time: 所有数据被ACK时间
-close_time: 流关闭时间(读取到FIN/RST)
-app_reset_time: 应用发送RST时间
-local_reset_time: 发送RST到socket时间
-peer_reset_time: 接收到对端RST时间
+/*
+XQC_STREAM_FLAG_READY_TO_WRITE: 流已经可以写入数据
+XQC_STREAM_FLAG_READY_TO_READ: 流已经可以读取数据
+XQC_STREAM_FLAG_DATA_BLOCKED: 流的数据发送被阻塞
+XQC_STREAM_FLAG_HAS_0RTT: 流使用了0-RTT发送数据
+XQC_STREAM_FLAG_HAS_H3: 流使用HTTP3协议
+XQC_STREAM_FLAG_NEED_CLOSE: 流需要关闭
+XQC_STREAM_FLAG_FIN_WRITE: 已发送FIN标志
+XQC_STREAM_FLAG_CLOSED: 流已经关闭
+XQC_STREAM_FLAG_UNEXPECTED: 意外接收到该流的帧或数据
+XQC_STREAM_FLAG_DISCARDED: 流创建错误,丢弃其所有数据
 */
+
 typedef enum {
     XQC_STREAM_FLAG_READY_TO_WRITE  = 1 << 0,
     XQC_STREAM_FLAG_READY_TO_READ   = 1 << 1,
@@ -129,34 +126,51 @@ typedef struct xqc_stream_write_buff_list_s {
     uint64_t                total_len;
 } xqc_stream_write_buff_list_t;
 
+//一个quic流的所有信息。
 struct xqc_stream_s {
-    xqc_connection_t       *stream_conn;
-    xqc_stream_id_t         stream_id;
-    xqc_stream_type_t       stream_type;
-    void                   *user_data;
-    xqc_stream_callbacks_t *stream_if;
+    xqc_connection_t       *stream_conn; //所属的QUIC连接对象
+    xqc_stream_id_t         stream_id; //流ID
+    xqc_stream_type_t       stream_type; // 流类型(bidirectional、unidirectional等)
+    void                   *user_data; //用户自定义数据指针
+    xqc_stream_callbacks_t *stream_if; //流回调接口
 
-    xqc_stream_flow_ctl_t   stream_flow_ctl;
+    xqc_stream_flow_ctl_t   stream_flow_ctl; //流级流控相关信息
     xqc_stream_write_buff_list_t
-                            stream_write_buff_list; /* buffer list for 0RTT */
-    xqc_list_head_t         write_stream_list,
+                            stream_write_buff_list; /* buffer list for 0RTT */ // 0-RTT数据缓冲队列
+    xqc_list_head_t         write_stream_list, //stream类型。
                             read_stream_list,
                             closing_stream_list,
                             all_stream_list;
 
-    uint64_t                stream_send_offset;
+    uint64_t                stream_send_offset; 
     uint64_t                stream_max_recv_offset;
-    xqc_stream_flag_t       stream_flag;
-    xqc_encrypt_level_t     stream_encrypt_level;
-    xqc_stream_data_in_t    stream_data_in;
-    unsigned                stream_unacked_pkt;
-    int64_t                 stream_refcnt;
-    xqc_send_stream_state_t stream_state_send;
+    xqc_stream_flag_t       stream_flag;  //流状态标志位
+    xqc_encrypt_level_t     stream_encrypt_level; //: 数据包加密级别
+    xqc_stream_data_in_t    stream_data_in; // 接收到的数据信息
+    unsigned                stream_unacked_pkt; //未ACK的数据包数
+    int64_t                 stream_refcnt; //引用计数
+    xqc_send_stream_state_t stream_state_send; // 发送和接收状态机状态
     xqc_recv_stream_state_t stream_state_recv;
-    xqc_usec_t              stream_close_time;
-    uint64_t                stream_err;
-    const char             *stream_close_msg;
+    xqc_usec_t              stream_close_time; // 流关闭超时时间
+    uint64_t                stream_err; // 流错误码
+    const char             *stream_close_msg; // 流关闭原因描述
 
+    /**
+     * 
+    create_time: 流创建时间
+    peer_fin_rcv_time: 接收到对端FIN时间
+    peer_fin_read_time: 应用读取到对端FIN时间
+    local_fin_write_time: 应用发送FIN时间
+    local_fin_snd_time: 发送FIN到socket时间
+    first_write_time: 应用首次发送数据时间
+    first_snd_time: 首次发送数据到socket时间
+    first_fin_ack_time: 收到对端对FIN的ACK时间
+    all_data_acked_time: 所有数据被ACK时间
+    close_time: 流关闭时间(读取到FIN/RST)
+    app_reset_time: 应用发送RST时间
+    local_reset_time: 发送RST到socket时间
+    peer_reset_time: 接收到对端RST时间
+    */
     struct {
         xqc_usec_t          create_time;
         xqc_usec_t          peer_fin_rcv_time;      /* quic stack rcv fin */

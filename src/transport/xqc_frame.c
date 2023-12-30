@@ -459,6 +459,7 @@ xqc_process_stream_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
     
     //recv reset后,不允许接收frame,直接推出.
     //这是rfc可以自由实现的部分.
+    //4.4 s收到RESET_STREAM帧后，终端将设置匹配的流的状态为终止态，并忽略到达该流的其他数据。
     if (stream->stream_state_recv >= XQC_RECV_STREAM_ST_RESET_RECVD) {
         xqc_log(conn->log, XQC_LOG_DEBUG, "|RESET_RECVD return|stream_id:%ui|", stream_id);
         ret = XQC_OK;
@@ -476,6 +477,7 @@ xqc_process_stream_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
     
     //fin处理
     if (stream_frame->fin) {
+        //4.5 如果接收到的RESET_STREAM或STREAM帧指示流的最终大小发生变化，终端应该（SHOULD）响应类型为FINAL_SIZE_ERROR的错误
         if (stream->stream_data_in.stream_determined
             && stream->stream_data_in.stream_length != stream_frame->data_offset + stream_frame->data_length) 
         {
@@ -497,7 +499,8 @@ xqc_process_stream_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
             xqc_stream_recv_state_update(stream, XQC_RECV_STREAM_ST_SIZE_KNOWN);
         }
     }
-
+    
+    //4.5 如果接收到的RESET_STREAM或STREAM帧指示流的最终大小发生变化，终端应该（SHOULD）响应类型为FINAL_SIZE_ERROR的错误
     if (stream->stream_data_in.stream_determined
         && stream_frame->data_offset + stream_frame->data_length > stream->stream_data_in.stream_length)
     {
@@ -537,7 +540,8 @@ xqc_process_stream_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
         conn->conn_flow_ctl.fc_data_recved += stream_frame->data_offset + stream_frame->data_length - stream->stream_max_recv_offset;
         stream->stream_max_recv_offset = stream_frame->data_offset + stream_frame->data_length;
     }
-
+    
+    //4.1 如果发送方违反了通告的连接或流上的数据限额，则接收方必须（MUST）以FLOW_CONTROL_ERROR类型的错误关闭连接，
     if (conn->conn_flow_ctl.fc_data_recved > conn->conn_flow_ctl.fc_max_data_can_recv) {
         xqc_log(conn->log, XQC_LOG_ERROR,
                 "|exceed conn flow control|fc_data_recved:%ui|fc_max_data_can_recv:%ui|",
@@ -1084,13 +1088,15 @@ xqc_process_data_blocked_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_i
                 "|xqc_parse_data_blocked_frame error|");
         return ret;
     }
-
+    
+    //4.1 一旦接收方通告了连接或流上的限额，再通告一个更小的限额不会导致错误，但会被发送方忽略。
     if (conn->conn_flow_ctl.fc_data_read + conn->conn_flow_ctl.fc_recv_windows_size <= data_limit) {
         xqc_log(conn->log, XQC_LOG_INFO, "|cannot increase data_limit now|fc_max_data_can_recv:%ui|data_limit:%ui|fc_data_read:%ui|",
                 conn->conn_flow_ctl.fc_max_data_can_recv, data_limit, conn->conn_flow_ctl.fc_data_read);
         return XQC_OK;
     }
-
+    
+    //立即发送max_data_frame
     conn->conn_flow_ctl.fc_max_data_can_recv = conn->conn_flow_ctl.fc_data_read + conn->conn_flow_ctl.fc_recv_windows_size;
 
     ret = xqc_write_max_data_to_packet(conn, conn->conn_flow_ctl.fc_max_data_can_recv);
@@ -1144,7 +1150,8 @@ xqc_process_stream_data_blocked_frame(xqc_connection_t *conn, xqc_packet_in_t *p
     }
 
     stream->stream_flow_ctl.fc_max_stream_data_can_recv = stream->stream_data_in.next_read_offset + stream->stream_flow_ctl.fc_stream_recv_window_size;
-
+    
+    //立即发送max_stream_data
     ret = xqc_write_max_stream_data_to_packet(conn, stream_id, stream->stream_flow_ctl.fc_max_stream_data_can_recv, XQC_PTYPE_SHORT_HEADER);
     if (ret != XQC_OK) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_write_max_stream_data_to_packet error|");
@@ -1195,7 +1202,8 @@ xqc_process_streams_blocked_frame(xqc_connection_t *conn, xqc_packet_in_t *packe
     if (stream_limit < XQC_MAX_STREAMS && (new_max_streams > XQC_MAX_STREAMS)) {
         new_max_streams = XQC_MAX_STREAMS;
     }
-
+    
+    //理解发送max_streams
     ret = xqc_write_max_streams_to_packet(conn, new_max_streams, bidirectional);
     if (ret != XQC_OK) {
         xqc_log(conn->log, XQC_LOG_ERROR,

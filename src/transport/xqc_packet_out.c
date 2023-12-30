@@ -1037,15 +1037,19 @@ xqc_write_stream_frame_to_packet(xqc_connection_t *conn,
     uint64_t available_window;
     
     //受到流控限制
+    //4.2 接收方不得（MUST NOT）等待STREAM_DATA_BLOCKED或DATA_BLOCKED帧到达之后再发送MAX_STREAM_DATA或MAX_DATA帧，因为这样做可能会导致发送方在连接的其余时间被阻塞。
+    //即使发送方发送了这些帧，接收方等待它们到达再回应也会导致发送方被阻塞至少整个RTT。
     if (conn->conn_settings.enable_stream_rate_limit
         && stream->stream_send_offset == 0
         && stream->stream_type == XQC_CLI_BID) 
     {
         available_window = stream->stream_flow_ctl.fc_max_stream_data_can_recv - stream->stream_data_in.next_read_offset;
         old_fc_win = stream->stream_flow_ctl.fc_stream_recv_window_size;
-
+        
+        //更新fc_stream_recv_window_size
         if (stream->recv_rate_bytes_per_sec) {
             /* set window according to the rate limit */
+            //接受窗口至少保持一个rtt的数据量。
             max_srtt = xqc_conn_get_max_srtt(conn);
             stream->stream_flow_ctl.fc_stream_recv_window_size = stream->recv_rate_bytes_per_sec * max_srtt / 1000000;
             stream->stream_flow_ctl.fc_stream_recv_window_size = xqc_max(conn->conn_settings.init_recv_window, stream->stream_flow_ctl.fc_stream_recv_window_size);
@@ -1066,6 +1070,7 @@ xqc_write_stream_frame_to_packet(xqc_connection_t *conn,
         }
         
         //max_stream_data
+        //4.2 为避免阻塞发送方，接收方可以（MAY）在一个RTT中多次发送MAX_STREAM_DATA或MAX_DATA帧，或者提前足够时间量发送这两种帧，以便为丢包和后续恢复留出时间。
         if (stream->stream_flow_ctl.fc_stream_recv_window_size > available_window) {        
             stream->stream_flow_ctl.fc_max_stream_data_can_recv += (stream->stream_flow_ctl.fc_stream_recv_window_size - available_window);
             xqc_log(conn->log, XQC_LOG_DEBUG,

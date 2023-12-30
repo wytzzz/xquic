@@ -137,6 +137,21 @@ typedef enum {
     XQC_CONN_FLAG_SHIFT_NUM,
 } xqc_conn_flag_shift_t;
 
+/*
+XQC_CONN_FLAG_WAIT_WAKEUP: 等待唤醒回调
+XQC_CONN_FLAG_HANDSHAKE_COMPLETED: 握手完成
+XQC_CONN_FLAG_CAN_SEND_1RTT: 可以发送 1-RTT 数据
+XQC_CONN_FLAG_TICKING: 连接存活定时器运行中
+XQC_CONN_FLAG_ACK_HAS_GAP: ACK 帧有间隙
+XQC_CONN_FLAG_TIME_OUT: 连接超时
+XQC_CONN_FLAG_ERROR: 连接发生错误
+XQC_CONN_FLAG_DATA_BLOCKED: 数据发送被阻塞
+XQC_CONN_FLAG_DCID_OK: Destination CID 验证通过
+XQC_CONN_FLAG_TOKEN_OK: 验证 Token 通过
+XQC_CONN_FLAG_HAS_0RTT: 有 0-RTT 数据
+XQC_CONN_FLAG_0RTT_OK: 0-RTT 数据已接受
+XQC_CONN_FLAG_0RTT_REJ: 0-RTT 数据被拒绝
+*/
 typedef enum {
     XQC_CONN_FLAG_WAIT_WAKEUP           = 1ULL << XQC_CONN_FLAG_WAIT_WAKEUP_SHIFT,
     XQC_CONN_FLAG_HANDSHAKE_COMPLETED   = 1ULL << XQC_CONN_FLAG_HANDSHAKE_COMPLETED_SHIFT,
@@ -205,7 +220,17 @@ typedef struct {
     uint16_t                max_datagram_frame_size;
 } xqc_trans_settings_t;
 
-
+/*
+fc_max_data_can_send: 连接级发送限制的最大数据量
+fc_data_sent: 已发送的数据总量
+fc_max_data_can_recv: 连接级接收限制的最大数据量
+fc_data_recved: 已接收的数据总量
+fc_data_read: 已读取的数据总量
+fc_max_streams_bidi/uni_can_send: 可发送的双向/单向流数量限制
+fc_max_streams_bidi/uni_can_recv: 可接收的双向/单向流数量限制
+fc_recv_windows_size: 接收流控窗口大小
+fc_last_window_update_time: 上次更新流控窗口的时间
+*/
 typedef struct {
     /* flow control limit */
     uint64_t                fc_max_data_can_send;
