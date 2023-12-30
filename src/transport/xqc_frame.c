@@ -450,19 +450,22 @@ xqc_process_stream_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
     }
 
     conn->stream_stats.recv_bytes += stream_frame->data_length;
-
+    
     xqc_stream_path_metrics_on_recv(conn, stream, packet_in);
 
     if (packet_in->pi_path_id < XQC_MAX_PATHS_COUNT) {
         stream->paths_info[packet_in->pi_path_id].path_recv_bytes += stream_frame->data_length;
     }
-
+    
+    //recv reset后,不允许接收frame,直接推出.
+    //这是rfc可以自由实现的部分.
     if (stream->stream_state_recv >= XQC_RECV_STREAM_ST_RESET_RECVD) {
         xqc_log(conn->log, XQC_LOG_DEBUG, "|RESET_RECVD return|stream_id:%ui|", stream_id);
         ret = XQC_OK;
         goto free;
     }
-
+    
+    //重复数据
     if (stream_frame->data_offset + stream_frame->data_length <= stream->stream_data_in.merged_offset_end) {
         if (!(stream_frame->fin && stream_frame->data_length == 0 && stream->stream_data_in.stream_length == 0)) {
             xqc_log(conn->log, XQC_LOG_DEBUG, "|already recvd|data_offset:%ui|data_length:%ud|merged_offset_end:%ui|",
@@ -470,7 +473,8 @@ xqc_process_stream_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
             goto free;
         }
     }
-
+    
+    //fin处理
     if (stream_frame->fin) {
         if (stream->stream_data_in.stream_determined
             && stream->stream_data_in.stream_length != stream_frame->data_offset + stream_frame->data_length) 
@@ -487,7 +491,8 @@ xqc_process_stream_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
 
         stream->stream_data_in.stream_length = stream_frame->data_offset + stream_frame->data_length;
         stream->stream_data_in.stream_determined = XQC_TRUE;
-
+        
+        //3.2 当接收到带有FIN位的STREAM帧时，流的最终大小确定（参见第4.5节），流的接收侧因此进入Size Known状态
         if (stream->stream_state_recv == XQC_RECV_STREAM_ST_RECV) {
             xqc_stream_recv_state_update(stream, XQC_RECV_STREAM_ST_SIZE_KNOWN);
         }
@@ -516,7 +521,7 @@ xqc_process_stream_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
 
         goto free;
     }
-
+    
     ret = xqc_insert_stream_frame(conn, stream, stream_frame);
     if (ret == -XQC_EDUP_FRAME) {
         ret = XQC_OK;
@@ -548,7 +553,8 @@ xqc_process_stream_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
         XQC_CONN_ERR(conn, TRA_FLOW_CONTROL_ERROR);
         return -XQC_EPROTO;
     }
-
+    
+    //3.2 一旦接收完所有数据，流的接收侧就进入Data Recvd状态，接收到与导致流切换为Size Known态相同的STREAM帧后也可能会切入此状态
     if (stream->stream_data_in.stream_determined
         && stream->stream_data_in.stream_length == stream->stream_data_in.merged_offset_end) 
     {
@@ -1001,6 +1007,8 @@ xqc_process_reset_stream_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_i
         xqc_write_reset_stream_to_packet(conn, stream, err_code, stream->stream_send_offset);
     }
 
+    //处理reset stream frame
+    //3.2 
     if (stream->stream_state_recv < XQC_RECV_STREAM_ST_RESET_RECVD) {
         xqc_stream_recv_state_update(stream, XQC_RECV_STREAM_ST_RESET_RECVD);
         if (stream->stream_stats.peer_reset_time == 0) {
@@ -1053,6 +1061,9 @@ xqc_process_stop_sending_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_i
      * MUST send a RESET_STREAM frame if the stream is in the Ready or Send
      * state.
      */
+    //3.5 
+    //STOP_SENDING帧请求接收到该帧的终端发送RESET_STREAM帧。
+    //如果流处于Ready或Send状态，则接收到STOP_SENDING帧的终端必须（MUST）发送RESET_STREAM帧
     if (stream->stream_state_send < XQC_SEND_STREAM_ST_RESET_SENT) {
         xqc_write_reset_stream_to_packet(conn, stream, H3_REQUEST_CANCELLED, stream->stream_send_offset);
     }
@@ -1240,6 +1251,9 @@ xqc_process_max_stream_data_frame(xqc_connection_t *conn, xqc_packet_in_t *packe
 
     stream = xqc_find_stream_by_id(stream_id, conn->streams_hash);
     if (!stream) {
+        //是都需要创建新的流
+        //server : 如果是客户单创建的.
+        //client: 如果是服务端创建的.
         if ((conn->conn_type == XQC_CONN_TYPE_SERVER && (stream_type == XQC_CLI_BID || stream_type == XQC_CLI_UNI))
             || (conn->conn_type == XQC_CONN_TYPE_CLIENT && (stream_type == XQC_SVR_BID || stream_type == XQC_SVR_UNI)))
         {
@@ -1254,7 +1268,7 @@ xqc_process_max_stream_data_frame(xqc_connection_t *conn, xqc_packet_in_t *packe
             return XQC_OK;
         }
     }
-
+    //更新流控
     if (max_stream_data > stream->stream_flow_ctl.fc_max_stream_data_can_send) {
         xqc_log(conn->log, XQC_LOG_DEBUG, "|max_stream_data=%ui|max_stream_data_old=%ui|",
                 max_stream_data, stream->stream_flow_ctl.fc_max_stream_data_can_send);

@@ -107,17 +107,20 @@ xqc_stream_maybe_need_close(xqc_stream_t *stream)
     {
         stream->stream_stats.all_data_acked_time = xqc_monotonic_timestamp();
     }
-
+    
+    //3.4 当发送侧和接收侧都处于终止状态时将流表示为“关闭”。
     if ((stream->stream_state_send == XQC_SEND_STREAM_ST_DATA_RECVD || stream->stream_state_send == XQC_SEND_STREAM_ST_RESET_RECVD)
         && (stream->stream_state_recv == XQC_RECV_STREAM_ST_DATA_READ || stream->stream_state_recv == XQC_RECV_STREAM_ST_RESET_READ))
     {
         xqc_log(stream->stream_conn->log, XQC_LOG_DEBUG, "|stream_id:%ui|stream_type:%d|", stream->stream_id, stream->stream_type);
+        //设置XQC_STREAM_FLAG_NEED_CLOSE标志,记录关闭时间。
         stream->stream_flag |= XQC_STREAM_FLAG_NEED_CLOSE;
         xqc_usec_t now = xqc_monotonic_timestamp();
         if (stream->stream_stats.close_time == 0) {
             stream->stream_stats.close_time = now;
         }
-
+            
+        //设置流的关闭定时器,超时时间为3倍的PTO。
         xqc_timer_manager_t *timer_manager = &stream->stream_conn->conn_timer_manager;
         xqc_usec_t pto = xqc_conn_get_max_pto(stream->stream_conn);
         xqc_usec_t new_expire = now + 3 * pto;
@@ -579,6 +582,7 @@ xqc_create_stream_with_conn(xqc_connection_t *conn, xqc_stream_id_t stream_id,
     stream->stream_conn = conn;
     stream->stream_if = &conn->app_proto_cbs.stream_cbs;
     stream->user_data = user_data;
+    //3.1 Ready态表示新创建的流可以从应用接收数据，流数据在这种状态下可以被缓存以备发送。
     stream->stream_state_send = XQC_SEND_STREAM_ST_READY;
     stream->stream_state_recv = XQC_RECV_STREAM_ST_RECV;
 
@@ -772,6 +776,8 @@ xqc_stream_close(xqc_stream_t *stream)
     }
 
     /* A STOP_SENDING frame can be sent for streams in the "Recv" or "Size
+    //3.5 果流处于Recv或Size Known状态，传输应该（SHOULD）通过发送一个STOP_SENDING帧来提示相反方向的流关闭。
+    //这通常表示应用不再读取它从流中接收的数据，但这不是说传入的数据将被忽略。
        Known" states */
     if (stream->stream_state_recv == XQC_RECV_STREAM_ST_RECV
         || stream->stream_state_recv == XQC_RECV_STREAM_ST_SIZE_KNOWN)
@@ -807,6 +813,7 @@ xqc_insert_passive_stream_hash(xqc_connection_t *conn, int64_t cur_max_sid, xqc_
     return XQC_OK;
 }
 
+//服务器收到客户端初始化的流时，或者客户端收到服务器初始化的流时。这个函数会对流进行初始化并将其加入到连接的管理结构中去
 xqc_stream_t *
 xqc_passive_create_stream(xqc_connection_t *conn, xqc_stream_id_t stream_id, void *user_data)
 {
@@ -814,8 +821,10 @@ xqc_passive_create_stream(xqc_connection_t *conn, xqc_stream_id_t stream_id, voi
         xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_stream_do_create_flow_ctl error|");
         return NULL;
     }
-
+    
+    //将流ID右移两位，通常这样做来移除QUIC流ID的最低两位，因为在QUIC协议中流ID的最低位用于标识流的类型
     int64_t sid = stream_id >> 2u;
+    //根据流的类型更新连接对象中对应的最大流ID记录：
     if (xqc_stream_is_bidi(stream_id) && sid > conn->max_stream_id_bidi_remote) {
         xqc_insert_passive_stream_hash(conn, conn->max_stream_id_bidi_remote, stream_id);
         conn->max_stream_id_bidi_remote = sid;
@@ -1222,7 +1231,9 @@ xqc_stream_recv(xqc_stream_t *stream, unsigned char *recv_buf, size_t recv_buf_s
     size_t read = 0;
     size_t frame_left;
     *fin = 0;
-
+    
+    //app读取到了reset流的状态。
+    //3.2 自由实现部分,一旦应用接收到指示流被重置的信号，流的接收侧即切换到Reset Read状态，这也是一个终止状态。
     if (stream->stream_state_recv >= XQC_RECV_STREAM_ST_RESET_RECVD) {
         stream->stream_state_recv = XQC_RECV_STREAM_ST_RESET_READ;
         xqc_stream_shutdown_read(stream);
@@ -1284,7 +1295,9 @@ xqc_stream_recv(xqc_stream_t *stream, unsigned char *recv_buf, size_t recv_buf_s
         }
 
     }
-
+        
+    
+    //应用层已经读取完stream中的数据
     if (stream->stream_data_in.stream_determined
         && stream->stream_data_in.next_read_offset == stream->stream_data_in.stream_length) 
     {
@@ -1292,6 +1305,7 @@ xqc_stream_recv(xqc_stream_t *stream, unsigned char *recv_buf, size_t recv_buf_s
         stream->stream_stats.peer_fin_read_time = xqc_monotonic_timestamp();
         if (stream->stream_state_recv == XQC_RECV_STREAM_ST_DATA_RECVD) {
             xqc_stream_recv_state_update(stream, XQC_RECV_STREAM_ST_DATA_READ);
+            //关闭流 
             xqc_stream_maybe_need_close(stream);
         }
     }
@@ -1319,16 +1333,20 @@ ssize_t
 xqc_stream_send(xqc_stream_t *stream, unsigned char *send_data, size_t send_data_size, uint8_t fin)
 {
     xqc_connection_t *conn = stream->stream_conn;
+    
     if (conn->conn_state >= XQC_CONN_STATE_CLOSING) {
         xqc_conn_log(conn, XQC_LOG_INFO, "|conn closing, cannot send|stream_id:%ui|", stream->stream_id);
         xqc_stream_shutdown_write(stream);
         return -XQC_CLOSING;
     }
+    //3.3 发送方在处于Reset Sent态（即在发送RESET_STREAM帧之后）或终止态时不得（MUST NOT）发送STREAM或STREAM_DATA_BLOCKED帧
     if (stream->stream_state_send >= XQC_SEND_STREAM_ST_RESET_SENT) {
         xqc_conn_log(conn, XQC_LOG_INFO, "|stream reset sent, cannot send|stream_id:%ui|", stream->stream_id);
+        //关闭流
         xqc_stream_shutdown_write(stream);
         return -XQC_ESTREAM_RESET;
     }
+    //3.1 在应用指示已发送完所有流数据，并已发送设置了FIN位的STREAM帧后，流的发送侧进入Data Sent态。在此状态下，本端仅在必要时重传流数据（对端ACK显示有丢包)
     if (stream->stream_flag & XQC_STREAM_FLAG_FIN_WRITE) {
         xqc_conn_log(conn, XQC_LOG_WARN, "|fin write, cannot send|stream_id:%ui|", stream->stream_id);
         xqc_stream_shutdown_write(stream);
@@ -1546,7 +1564,8 @@ xqc_process_write_streams(xqc_connection_t *conn)
     xqc_stream_t *stream;
     xqc_list_head_t *pos, *next;
     int cnt = 0;
-
+    
+    //处理block
     xqc_list_for_each_safe(pos, next, &conn->conn_write_streams) {
         stream = xqc_list_entry(pos, xqc_stream_t, write_stream_list);
         if (stream->stream_flag & XQC_STREAM_FLAG_DATA_BLOCKED
@@ -1558,6 +1577,7 @@ xqc_process_write_streams(xqc_connection_t *conn)
         }
         xqc_log(conn->log, XQC_LOG_DEBUG, "|stream_write_notify|flag:%d|stream_id:%ui|conn:%p|cnt:%d|",
                 stream->stream_flag, stream->stream_id, stream->stream_conn, cnt++);
+
         if (stream->stream_if->stream_write_notify == NULL) {
             xqc_log(conn->log, XQC_LOG_ERROR, "|stream_write_notify is NULL|flag:%d|stream_id:%ui|conn:%p|",
                     stream->stream_flag, stream->stream_id, stream->stream_conn);

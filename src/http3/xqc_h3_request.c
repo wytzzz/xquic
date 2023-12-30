@@ -10,7 +10,7 @@
 #include "src/common/xqc_time.h"
 
 
-xqc_h3_request_t *
+xqc_h3_request_t * 
 xqc_h3_request_create(xqc_engine_t *engine, 
     const xqc_cid_t *cid, xqc_stream_settings_t *settings, void *user_data)
 {

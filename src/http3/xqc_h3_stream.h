@@ -122,6 +122,7 @@ typedef struct xqc_h3_stream_s {
     xqc_list_head_t                 send_buf;
 
     /* stream priority (RFC9218) */
+    //
     xqc_h3_priority_t               priority;
 
     struct {

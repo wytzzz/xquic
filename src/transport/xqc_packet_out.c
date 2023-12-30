@@ -702,7 +702,7 @@ xqc_write_reset_stream_to_packet(xqc_connection_t *conn, xqc_stream_t *stream,
             buff_reset = XQC_TRUE;
         }
     }
-
+    
     packet_out = xqc_write_new_packet(conn, pkt_type);
     if (packet_out == NULL) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_write_new_packet error|");
@@ -723,6 +723,8 @@ xqc_write_reset_stream_to_packet(xqc_connection_t *conn, xqc_stream_t *stream,
     packet_out->po_stream_frames[0].ps_is_reset = 1;
     packet_out->po_stream_frames[0].ps_is_used = 1;
     packet_out->po_stream_frames_idx++;
+    //3.1 在Ready、Send或Data Sent任一状态，应用可以发信号表示它希望放弃流数据传输，或者，本端也可能会收到对端的STOP_SENDING帧。
+    //在上述情况下，本端都要发送RESET_STREAM帧，之后进入Reset Sent状态。
     if (stream->stream_state_send < XQC_SEND_STREAM_ST_RESET_SENT) {
         xqc_stream_send_state_update(stream, XQC_SEND_STREAM_ST_RESET_SENT);
     }
@@ -1033,7 +1035,8 @@ xqc_write_stream_frame_to_packet(xqc_connection_t *conn,
     xqc_usec_t max_srtt = 0;
     uint64_t old_fc_win = 0;
     uint64_t available_window;
-
+    
+    //受到流控限制
     if (conn->conn_settings.enable_stream_rate_limit
         && stream->stream_send_offset == 0
         && stream->stream_type == XQC_CLI_BID) 
@@ -1061,7 +1064,8 @@ xqc_write_stream_frame_to_packet(xqc_connection_t *conn,
                     stream->stream_id,
                     old_fc_win, stream->stream_flow_ctl.fc_stream_recv_window_size);
         }
-
+        
+        //max_stream_data
         if (stream->stream_flow_ctl.fc_stream_recv_window_size > available_window) {        
             stream->stream_flow_ctl.fc_max_stream_data_can_recv += (stream->stream_flow_ctl.fc_stream_recv_window_size - available_window);
             xqc_log(conn->log, XQC_LOG_DEBUG,
@@ -1076,6 +1080,8 @@ xqc_write_stream_frame_to_packet(xqc_connection_t *conn,
 
     /* We need 25 bytes for stream frame header at most, and left bytes for stream data.
      * It's a trade-off value, bigger need bytes for higher payload rate. */
+
+    //开发发送数据
     const unsigned need = 50;
     packet_out = xqc_write_packet_for_stream(conn, pkt_type, need, stream);
     if (packet_out == NULL) {

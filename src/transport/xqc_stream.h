@@ -18,6 +18,8 @@
     }                                               \
 } while(0)                                          \
 
+
+//2.1
 typedef enum {
     XQC_CLI_BID = 0,
     XQC_SVR_BID = 1,
@@ -26,6 +28,22 @@ typedef enum {
 } xqc_stream_type_t;
 
 
+/**
+ * 
+create_time: 流创建时间
+peer_fin_rcv_time: 接收到对端FIN时间
+peer_fin_read_time: 应用读取到对端FIN时间
+local_fin_write_time: 应用发送FIN时间
+local_fin_snd_time: 发送FIN到socket时间
+first_write_time: 应用首次发送数据时间
+first_snd_time: 首次发送数据到socket时间
+first_fin_ack_time: 收到对端对FIN的ACK时间
+all_data_acked_time: 所有数据被ACK时间
+close_time: 流关闭时间(读取到FIN/RST)
+app_reset_time: 应用发送RST时间
+local_reset_time: 发送RST到socket时间
+peer_reset_time: 接收到对端RST时间
+*/
 typedef enum {
     XQC_STREAM_FLAG_READY_TO_WRITE  = 1 << 0,
     XQC_STREAM_FLAG_READY_TO_READ   = 1 << 1,
@@ -39,6 +57,7 @@ typedef enum {
     XQC_STREAM_FLAG_DISCARDED       = 1 << 9,   /* stream create_notify with error, all stream data will be discarded */
 } xqc_stream_flag_t;
 
+//rfc9000 3.1
 typedef enum {
     XQC_SEND_STREAM_ST_READY,
     XQC_SEND_STREAM_ST_SEND,
@@ -48,6 +67,7 @@ typedef enum {
     XQC_SEND_STREAM_ST_RESET_RECVD,
 } xqc_send_stream_state_t;
 
+//rfc9000 3.2
 typedef enum {
     XQC_RECV_STREAM_ST_RECV,
     XQC_RECV_STREAM_ST_SIZE_KNOWN,
@@ -79,10 +99,17 @@ typedef struct xqc_stream_frame_s {
 /* Put all received STREAM data here */
 typedef struct xqc_stream_data_in_s {
     /* A list of STREAM frame, order by offset */
+    //链表存储了接收到的STREAM帧（xqc_stream_frame_t类型）。
+    //这些帧根据它们在流中的偏移量排序，以确保数据可以按照正确的顺序被处理和再组装
     xqc_list_head_t         frames_tailq;       /* xqc_stream_frame_t */
+    //字段记录了流中已经合并的数据的结束偏移量
+    //[0, end)表示包含从0开始到end（不包含end）的数据。它帮助跟踪哪些数据已经是连续的并且已准备好被应用层读取。
     uint64_t                merged_offset_end;  /* [0,end) */
+    //指明了应用层下一个预期读取的流中的偏移量。这有助于在多次读取操作中保持跟踪，并确保流数据的连续性
     uint64_t                next_read_offset;   /* next offset in stream */
+    //流的总长度。当流的结束已由发送端指明时（通常通过发送一个带有FIN标志的STREAM帧），这个字段会被设置。
     uint64_t                stream_length;
+    //这个布尔字段表示流的最终长度是否已经确定。在QUIC流中，可能一开始不知道最终长度，直到接收到一个带有FIN标志的帧
     xqc_bool_t              stream_determined;
 } xqc_stream_data_in_t;
 
@@ -159,6 +186,8 @@ xqc_get_stream_type(xqc_stream_id_t stream_id)
     return stream_id & 0x03;
 }
 
+//0x02位：这一位标记流是单向（Unidirectional）还是双向（Bidirectional）。如果这一位为0，流是双向的；如果这一位为1，流是单向的。
+//0x01位：这一位用于指示流是由客户端还是由服务器初始化。如果这一位为0，表示由客户端初始化；如果这一位为1，表示由服务器初始化。
 static inline xqc_int_t
 xqc_stream_is_bidi(xqc_stream_id_t stream_id)
 {
@@ -175,7 +204,7 @@ xqc_stream_t *xqc_create_stream_with_conn (xqc_connection_t *conn, xqc_stream_id
     xqc_stream_type_t stream_type, xqc_stream_settings_t *settings, void *user_data);
 
 void xqc_destroy_stream(xqc_stream_t *stream);
-
+//rfc9000 2.4
 void xqc_process_write_streams(xqc_connection_t *conn);
 
 void xqc_process_read_streams(xqc_connection_t *conn);

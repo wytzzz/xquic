@@ -1,0 +1,9 @@
+{
+  "files.associations": {
+    "*.json": "cpp",
+    "xqc_stream.h": "c",
+    "xqc_h3_request.h": "c",
+    "xqc_h3_header.h": "c",
+    "xqc_h3_stream.h": "c"
+  }
+}

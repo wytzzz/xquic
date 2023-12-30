@@ -5163,6 +5163,7 @@ xqc_conn_decrease_unacked_stream_ref(xqc_connection_t *conn, xqc_packet_out_t *p
                     }
 
                     /* Update stream state */
+                    //3.1 一旦所有流数据都被成功确认，流的发送侧进入Data Recvd状态，这是一个终止状态。
                     if (stream->stream_unacked_pkt == 0 && stream->stream_state_send == XQC_SEND_STREAM_ST_DATA_SENT) {
                         xqc_stream_send_state_update(stream, XQC_SEND_STREAM_ST_DATA_RECVD);
                         xqc_log(conn->log, XQC_LOG_DEBUG, "|stream enter DATA RECVD|");
@@ -5191,6 +5192,9 @@ xqc_conn_increase_unacked_stream_ref(xqc_connection_t *conn, xqc_packet_out_t *p
                 if (stream != NULL) {
                     stream->stream_unacked_pkt++;
                     /* Update stream state */
+                    //3.1 
+                    //第一个STREAM或STREAM_DATA_BLOCKED帧的发送使得流的发送侧进入Send态
+                    //在应用指示已发送完所有流数据，并已发送设置了FIN位的STREAM帧后，流的发送侧进入Data Sent态
                     if (stream->stream_state_send == XQC_SEND_STREAM_ST_READY) {
                         xqc_stream_send_state_update(stream, XQC_SEND_STREAM_ST_SEND);
                     }

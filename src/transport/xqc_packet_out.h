@@ -23,6 +23,28 @@
 
 #define XQC_MAX_STREAM_FRAME_IN_PO  3
 
+/*
+XQC_POF_IN_FLIGHT：标记正在传输中的数据包（即，已发送但尚未收到确认的数据包）。
+XQC_POF_LOST：表明被认为丢失的数据包。通常在重传超时（RTO）时间流逝后，没有收到确认时会发生这种情况。
+XQC_POF_DCID_NOT_DONE：表示数据包的目的连接ID（Destination Connection ID）处理未完成。
+XQC_POF_RESERVED：保留的标志位，可能用于未来的用途。
+XQC_POF_TLP：表示尾部丢失探测数据包（Tail Loss Probe）。这些是特殊的数据包，用于在怀疑出现尾部丢失时探测路径状况。
+XQC_POF_STREAM_UNACK：标记那些流数据未被确认的数据包。
+XQC_POF_RETRANSED：标记已经被重传的数据包。
+XQC_POF_NOTIFY：需要在数据包被确认、丢失等情况时通知用户。
+XQC_POF_RESEND：表示需要重发的数据包。
+XQC_POF_REINJECTED_ORIGIN：表示原始数据被重新注入。
+XQC_POF_REINJECTED_REPLICA：表示副本数据被重新注入。
+XQC_POF_IN_PATH_BUF_LIST：在路径缓冲列表中的数据包（FIXED：复制时重置）。
+XQC_POF_IN_UNACK_LIST：在未确认列表中的数据包（FIXED：复制时重置）。
+XQC_POF_NOT_SCHEDULE：表示不被调度的数据包。
+XQC_POF_NOT_REINJECT：表示不被重新注入的数据包。
+XQC_POF_DROPPED_DGRAM：表示已被丢弃的数据报。
+XQC_POF_REINJECT_DIFF_PATH：表示经由不同路径重新注入的数据包。
+XQC_POF_PMTUD_PROBING：表示进行路径最大传输单元发现（PMTUD）探测的数据包。
+XQC_POF_QOS_HIGH：表示高质量服务（QoS）等级的数据包。
+XQC_POF_QOS_PROBING：表示进行QoS探测的数据包
+*/
 typedef enum {
     XQC_POF_IN_FLIGHT           = 1 << 0,
     XQC_POF_LOST                = 1 << 1,
@@ -46,14 +68,17 @@ typedef enum {
     XQC_POF_QOS_PROBING         = 1 << 19,
 } xqc_packet_out_flag_t;
 
+
 typedef struct xqc_po_stream_frame_s {
     xqc_stream_id_t         ps_stream_id;
     uint64_t                ps_offset;
     unsigned int            ps_length;
-    unsigned int            ps_type_offset;
-    unsigned int            ps_length_offset;
-    unsigned char           ps_is_used;
+    unsigned int            ps_type_offset; //流帧类型的偏移量，用于标记帧类型在数据包中的位置。
+    unsigned int            ps_length_offset; //表示流帧长度字段在整个帧内的偏移位
+    unsigned char           ps_is_used;  //标记该流帧结构是否已被使用。这通常用于管理内存和资源，确保数据结构得到有效利用。
+    //表示流帧是否设置了FIN标志。FIN标志表示数据流的结束，即没有更多的数据被发送。
     unsigned char           ps_has_fin;     /* whether fin flag from stream frame is set  */
+    //RESET_STREAM帧用于提前终止流，例如在发生错误或其他流的终止条件发生时。
     unsigned char           ps_is_reset;    /* whether frame is RESET_STREAM */
 } xqc_po_stream_frame_t;
 
