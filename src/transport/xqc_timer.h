@@ -25,6 +25,28 @@ typedef enum xqc_timer_level {
 } xqc_timer_level_t;
 
 /* !!warning add to timer_type_2_str */
+/*
+主要可以分为两大类:
+
+路径级别的定时器
+这些定时器在每个网络路径上都需要单独创建,包括:
+ACK相关的定时器:ACK_INIT、ACK_HSK、ACK_01RTT
+丢包检测定时器:LOSS_DETECTION
+链路探测定时器:PACING
+NAT重新绑定定时器:NAT_REBINDING
+路径空闲定时器:PATH_IDLE
+路径关闭定时器:PATH_DRAININ
+连接级别的定时器
+这些定时器在整个连接上只需要创建一次,包括:
+连接空闲定时器:CONN_IDLE
+连接关闭定时器:CONN_DRAINING
+流关闭定时器:STREAM_CLOSE
+心跳定时器:PING
+CID回收定时器:RETIRE_CID
+优雅关闭定时器:LINGER_CLOSE
+密钥更新定时器:KEY_UPDATE
+PMTUD探测定时器:PMTUD_PROBING
+*/
 typedef enum xqc_timer_type {
 
     /* path level (path->path_send_ctl->path_timer_manager->timer[XQC_TIMER_N])*/
@@ -225,6 +247,7 @@ static inline void
 xqc_timer_expire(xqc_timer_manager_t *manager, xqc_usec_t now)
 {
     xqc_timer_t *timer;
+    //遍历所有定时器,处理超时的定时器
     for (xqc_timer_type_t type = 0; type < XQC_TIMER_N; ++type) {
         timer = &manager->timer[type];
         if (timer->timer_is_set && timer->expire_time <= now) {
@@ -240,7 +263,7 @@ xqc_timer_expire(xqc_timer_manager_t *manager, xqc_usec_t now)
             }
 
             xqc_log_event(manager->log, REC_LOSS_TIMER_UPDATED, manager, 0, (xqc_int_t) type, (xqc_int_t) XQC_LOG_TIMER_EXPIRE);
-
+            //执行超时回调
             timer->timeout_cb(type, now, timer->user_data);
 
             /* unset timer if it is not updated in timeout_cb */

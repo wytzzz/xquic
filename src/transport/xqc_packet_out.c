@@ -543,8 +543,8 @@ write_new:
 
 pure_ack:
             /* send ack packet first */
-            xqc_send_queue_move_to_high_pri(&packet_out->po_list, conn->conn_send_queue);
-
+            (&packet_out->po_list, conn->conn_send_queue);
+xqc_send_queue_move_to_high_pri
 done:
             xqc_log(conn->log, XQC_LOG_DEBUG, "|path:%ui|pns:%d|", path->path_id, pns);
         }
@@ -1089,7 +1089,7 @@ xqc_write_stream_frame_to_packet(xqc_connection_t *conn,
     /* We need 25 bytes for stream frame header at most, and left bytes for stream data.
      * It's a trade-off value, bigger need bytes for higher payload rate. */
 
-    //开发发送数据
+    //发送数据
     const unsigned need = 50;
     packet_out = xqc_write_packet_for_stream(conn, pkt_type, need, stream);
     if (packet_out == NULL) {

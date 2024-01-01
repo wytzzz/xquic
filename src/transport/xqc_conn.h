@@ -68,6 +68,27 @@ extern xqc_conn_settings_t default_conn_settings;
 extern const xqc_tls_callbacks_t xqc_conn_tls_cbs;
 
 /* !!WARNING: to add state, please update conn_state_2_str */
+/*
+服务端状态:
+SERVER_INIT: 初始状态
+SERVER_INITIAL_RECVD: 收到客户端Initial包
+SERVER_INITIAL_SENT: 发送了服务器Initial包
+SERVER_HANDSHAKE_SENT: 发送了服务器握手包
+SERVER_HANDSHAKE_RECVD: 收到客户端握手包
+
+客户端状态:
+CLIENT_INIT: 初始状态
+CLIENT_INITIAL_SENT: 发送了客户端Initial包
+CLIENT_INITIAL_RECVD: 收到服务器Initial包
+CLIENT_HANDSHAKE_RECVD: 收到服务器握手包
+CLIENT_HANDSHAKE_SENT: 发送了客户端握手包
+
+公共状态:
+ESTABED: 连接已建立
+CLOSING: 正在关闭连接
+DRAINING: 正在排空数据
+CLOSED: 连接已关闭
+*/
 typedef enum {
     /* server */
     XQC_CONN_STATE_SERVER_INIT = 0,
@@ -197,7 +218,23 @@ typedef enum {
 
 } xqc_conn_flag_t;
 
-
+/*
+preferred_address: 首选地址,用于0-RTT
+max_idle_timeout: 空闲超时时间
+stateless_reset_token: 无状态重置token
+stateless_reset_token_present: token是否存在
+max_udp_payload_size: UDP载荷大小上限
+max_data: 连接级流控的最大数据量
+max_stream_data_bidi/uni: 单向/双向流的流控上限
+max_streams_bidi/uni: 可创建的最大双向/单向流数量
+ack_delay_exponent/max_ack_delay: ACK延迟相关
+disable_active_migration: 禁用主动迁移
+active_connection_id_limit: 激活CID数量限制
+no_crypto: 不使用加密
+enable_multipath: 启用多路径
+multipath_version: 多路径协议版本号
+max_datagram_frame_size: 数据报文最大大小
+*/
 typedef struct {
     xqc_preferred_addr_t    preferred_address;
     xqc_usec_t              max_idle_timeout;
@@ -284,9 +321,9 @@ struct xqc_connection_s {
     uint32_t                        discard_vn_flag;
 
     /* original destination connection id, RFC 9000, Section 7.3. */
-    xqc_cid_t                       original_dcid;
+    xqc_cid_t                       original_dcid;  //客户端发送的第一个dcid
     /* initial source connection id, RFC 9000, Section 7.3 */
-    xqc_cid_t                       initial_scid;
+    xqc_cid_t                       initial_scid;  //初始化的scid
 
     xqc_dcid_set_t                  dcid_set;
     xqc_scid_set_t                  scid_set;
@@ -441,6 +478,17 @@ struct xqc_connection_s {
     uint32_t                        send_cc_blocked;
 
     /* receved pkts stats */
+    /*
+    pkt_types: 最近3个包的类型,如Initial、Handshake等。
+    pkt_frames: 最近3个包中的帧类型位标志。
+    pkt_size: 最近3个包的大小。
+    pkt_udp_size: 接收端最近3个包的UDP大小。
+    pkt_err: 最近3个包的错误标志。
+    pkt_timestamp: 最近3个包的时间戳。
+    pkt_pn: 最近3个包的包号。
+    curr_index: 轮询记录索引。
+    conn_xxx_pkts: 连接总发送/接收包数。
+    */
     struct {
         xqc_pkt_type_t              pkt_types[3];
         xqc_frame_type_bit_t        pkt_frames[3];

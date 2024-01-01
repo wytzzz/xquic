@@ -833,7 +833,7 @@ xqc_conn_server_create(xqc_engine_t *engine, const struct sockaddr *local_addr,
     xqc_int_t           ret;
     xqc_connection_t   *conn;
     xqc_cid_t           new_scid;
-
+    
     xqc_cid_copy(&new_scid, scid);
 
     /*
@@ -842,6 +842,8 @@ xqc_conn_server_create(xqc_engine_t *engine, const struct sockaddr *local_addr,
      * its length equals to the config cid_len, otherwise might fail
      * decoding dcid from subsequent short header packets
      */
+    //生成服务端自己的Source CID,获取reset token。
+    //开启服务端s-scid协商,而不是直接复用c-dcid.
     if (engine->config->cid_negotiate
         || new_scid.cid_len != engine->config->cid_len) 
     {
@@ -857,15 +859,21 @@ xqc_conn_server_create(xqc_engine_t *engine, const struct sockaddr *local_addr,
                         XQC_STATELESS_RESET_TOKENLEN,
                         engine->config->reset_token_key,
                         engine->config->reset_token_keylen);
+    
 
     conn = xqc_conn_create(engine, dcid, &new_scid, settings, user_data, XQC_CONN_TYPE_SERVER);
     if (conn == NULL) {
         xqc_log(engine->log, XQC_LOG_ERROR, "|fail to create connection|");
         return NULL;
     }
-
+    
+    //保存c-dcid为conn->original_dcid
     xqc_cid_copy(&conn->original_dcid, scid);
-
+    
+    //将c-dcid插入到scid_set
+    //如果服务端丢失了初始握手包,客户端重传初始握手包时,服务端可以通过原始DCID查找到这个已创建的连接对象。
+    //否则只有服务端SCID是无法定位到这个连接的。
+    //所以需要额外保存客户端原始DCID,防止Initial丢包后的连接找不回来情况。
     if (xqc_cid_in_cid_set(&conn->scid_set.cid_set, &conn->original_dcid) == NULL) {
         /*
          * if server choose it's own cid, then if server Initial is lost,
@@ -906,12 +914,14 @@ xqc_conn_server_create(xqc_engine_t *engine, const struct sockaddr *local_addr,
                 (int)peer_addrlen);
         goto fail;
     }
-
+    
+    //初始化TLS上下文。
     ret = xqc_conn_create_server_tls(conn);
     if (ret != XQC_OK) {
         goto fail;
     }
-
+    
+    //初始化默认路径的地址信息。
     ret = xqc_conn_server_init_path_addr(conn, XQC_INITIAL_PATH_ID,
                                          local_addr, local_addrlen,
                                          peer_addr, peer_addrlen);
@@ -922,9 +932,11 @@ xqc_conn_server_create(xqc_engine_t *engine, const struct sockaddr *local_addr,
     xqc_log(engine->log, XQC_LOG_DEBUG, "|server accept new conn|");
     
     //5.2.2 如果服务端拒绝接受新连接，它应该（SHOULD）发送一个Initial包，其中包含一个错误码为CONNECTION_REFUSED的CONNECTION_CLOSE帧
+    //如果设置了accept回调,调用判断是否接受连接。
     if (conn->transport_cbs.server_accept) {
         if (conn->transport_cbs.server_accept(engine, conn, &conn->scid_set.user_scid, user_data) < 0) {
             xqc_log(engine->log, XQC_LOG_ERROR, "|server_accept callback return error|");
+            //如果拒绝,发送连接错误帧。
             XQC_CONN_ERR(conn, TRA_CONNECTION_REFUSED_ERROR);
             goto fail;
         }
@@ -1715,15 +1727,18 @@ xqc_path_send_packets(xqc_connection_t *conn, xqc_path_ctx_t *path,
 
     xqc_send_ctl_t *send_ctl = path->path_send_ctl;
     xqc_send_queue_t *send_queue = conn->conn_send_queue;
-
+    
+    //遍历指定类型(send_type)的待发送数据包列表path->path_schedule_buf。
     xqc_list_for_each_safe(pos, next, &path->path_schedule_buf[send_type]) {
         packet_out = xqc_list_entry(pos, xqc_packet_out_t, po_list);
-
+        
+        //对每个数据包packet_out检查是否已被ACK或dropped。如果是,跳过该数据包
         if (xqc_check_acked_or_dropped_pkt(conn, packet_out, send_type)) {
             xqc_log(conn->log, XQC_LOG_DEBUG, "|path:%ui|canceled_bytes:%ud|reinj:%d|", path->path_id, packet_out->po_used_size, XQC_MP_PKT_REINJECTED(packet_out));
             continue;
         }
-
+        
+        //检查是否超过反向放大的限制,如果是返回。
         /* check the anti-amplification limit, will allow a bit larger than 3x received */
         if (xqc_send_ctl_check_anti_amplification(send_ctl, 0)) {
             xqc_log(conn->log, XQC_LOG_INFO,
@@ -1733,13 +1748,15 @@ xqc_path_send_packets(xqc_connection_t *conn, xqc_path_ctx_t *path,
         }
 
         /* check cc limit */
+        //如果有拥塞控制,检查是否允许发送。如果不允许,返回。
         if (congest
             && !xqc_send_packet_check_cc(send_ctl, packet_out, 0))
         {
             send_ctl->ctl_conn->send_cc_blocked++;
             break;
         }
-
+        
+        //调用xqc_path_send_one_packet发送单个数据包。
         ret = xqc_path_send_one_packet(conn, path, packet_out);
         if (ret < 0) {
             break;
@@ -1758,6 +1775,7 @@ xqc_path_send_packets(xqc_connection_t *conn, xqc_path_ctx_t *path,
 
         /* move send list to unacked list */
         xqc_path_send_buffer_remove(path, packet_out);
+        //将已发送的数据包移出待发送列表,插入已发送未ACK列表或free列表。
         if (XQC_IS_ACK_ELICITING(packet_out->po_frame_types)) {
             xqc_send_queue_insert_unacked(packet_out,
                                           &send_queue->sndq_unacked_packets[packet_out->po_pkt.pkt_pns],
@@ -2615,11 +2633,13 @@ xqc_conn_immediate_close(xqc_connection_t *conn)
 }
 
 
+
 xqc_int_t
 xqc_conn_send_retry(xqc_connection_t *conn, unsigned char *token, unsigned token_len)
 {
     xqc_engine_t *engine = conn->engine;
     unsigned char buf[XQC_PACKET_OUT_BUF_CAP];
+    //如果因为某些原因，服务端需要回应Retry包，则需要在retry_source_connection_id传输参数中填入Retry包头的SCID字段。
     xqc_int_t size = (xqc_int_t)xqc_gen_retry_packet(buf,
                                                      conn->dcid_set.current_dcid.cid_buf,
                                                      conn->dcid_set.current_dcid.cid_len,
@@ -4628,6 +4648,7 @@ xqc_conn_on_recv_retry(xqc_connection_t *conn, xqc_cid_t *retry_scid)
 }
 
 
+//保存远端的传输参数.
 xqc_int_t
 xqc_conn_set_remote_transport_params(xqc_connection_t *conn,
     const xqc_transport_params_t *params, xqc_transport_params_type_t exttype)
@@ -4689,6 +4710,7 @@ xqc_conn_set_remote_transport_params(xqc_connection_t *conn,
     return XQC_OK;
 }
 
+//获取本地配置的传输参数.
 xqc_int_t
 xqc_conn_get_local_transport_params(xqc_connection_t *conn, xqc_transport_params_t *params)
 {
@@ -4724,6 +4746,8 @@ xqc_conn_get_local_transport_params(xqc_connection_t *conn, xqc_transport_params
     params->max_datagram_frame_size = settings->max_datagram_frame_size;
 
     /* set other transport parameters */
+    //设置初始的dcid
+    //7.3 服务端收到Initial包后，也需要将收到的数据包头中的DCID值，填入其响应的数据包的original_destination_connection_id传输参数中。
     if (conn->conn_type == XQC_CONN_TYPE_SERVER
         && conn->original_dcid.cid_len > 0)
     {
@@ -4745,11 +4769,13 @@ xqc_conn_get_local_transport_params(xqc_connection_t *conn, xqc_transport_params
     } else {
         params->original_dest_connection_id_present = 0;
     }
-
+    
+    //7.3 
+    //设置初始的scid
     xqc_cid_set(&params->initial_source_connection_id,
                  conn->initial_scid.cid_buf, conn->initial_scid.cid_len);
     params->initial_source_connection_id_present = 1;
-
+    
     params->retry_source_connection_id.cid_len = 0;
     params->retry_source_connection_id_present = 0;
 
@@ -4779,7 +4805,8 @@ xqc_conn_check_transport_params(xqc_connection_t *conn, const xqc_transport_para
             return -XQC_TLS_TRANSPORT_PARAM;
         }
     }
-
+    
+    //如果因为某些原因，服务端需要回应Retry包，则需要在retry_source_connection_id传输参数中填入Retry包头的SCID字段。
     if (conn->conn_type == XQC_CONN_TYPE_CLIENT) {
         /* check retry_source_connection_id parameter if recv retry packet */
         if (conn->conn_flag & XQC_CONN_FLAG_RETRY_RECVD) {
@@ -4818,6 +4845,7 @@ xqc_conn_tls_transport_params_cb(const uint8_t *tp, size_t len, void *user_data)
     }
 
     /* validate peer's transport parameter */
+    //检查传输参数有效性
     ret = xqc_conn_check_transport_params(conn, &params);
     if (ret != XQC_OK) {
         XQC_CONN_ERR(conn, TRA_TRANSPORT_PARAMETER_ERROR);
@@ -5369,6 +5397,7 @@ xqc_conn_closing_notify(xqc_connection_t *conn)
 
         if (!(conn->conn_flag & XQC_CONN_FLAG_CLOSING_NOTIFIED)) {
             conn->conn_flag |= XQC_CONN_FLAG_CLOSING_NOTIFIED;
+            //执行连接关闭回调
             conn->transport_cbs.conn_closing(conn, &conn->scid_set.user_scid, conn->conn_err, conn->user_data);
         }
     }

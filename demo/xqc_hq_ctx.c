@@ -41,6 +41,8 @@ xqc_hq_ctx_init(xqc_engine_t *engine, xqc_hq_callbacks_t *hq_cbs)
     };
 
     /* register ALPN and Application-Layer-Protocol callbacks */
+    //这段代码在xquic引擎中注册了ALPN(应用层协议协商)的回调函数。
+    
     if (xqc_engine_register_alpn(engine, XQC_ALPN_HQ_INTEROP, XQC_ALPN_HQ_INTEROP_LEN, &ap_cbs) != XQC_OK
         || xqc_engine_register_alpn(engine, XQC_ALPN_HQ_29, XQC_ALPN_HQ_29_LEN, &ap_cbs) != XQC_OK)
     {

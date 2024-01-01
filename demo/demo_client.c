@@ -147,22 +147,45 @@ typedef struct xqc_demo_cli_net_config_s {
 #define TRANSPORT_PARAMS_FILE       "transport_params"
 #define TOKEN_FILE                  "token"
 
+
+/*
+alpn_type: 应用层协议的类型,如HTTP
+alpn: 应用层协议名称
+st/tp/token: 0-RTT相关的会话信息
+cipher_suites: 支持的加密套件
+use_0rtt: 是否使用0-RTT
+keyupdate_pkt_threshold: 密钥更新的数据包阈值
+mp_ack_on_any_path: 多路径ACK设置
+mp_sched: 多路径调度策略
+mp_backup: 多路径备份配置
+close_path: 关闭指定路径
+no_encryption: 不加密数据
+recv_rate: 接收速率限制
+reinjection: 数据重传设置
+mp_version: 多路径版本
+is_interop_mode: 互操作模式
+send_path_standby: 发送待命路径数据
+path_status_timer_threshold: 路径状态定时器
+least_available_cid_count: 最小可用CID数量
+*/
 typedef struct xqc_demo_cli_quic_config_s {
     /* alpn protocol of client */
     xqc_demo_cli_alpn_type_t alpn_type;
     char alpn[16];
 
     /* 0-rtt config */
+    //st/tp/token: 0-RTT相关的会话信息
     int  st_len;                        /* session ticket len */
     char st[MAX_SESSION_TICKET_LEN];    /* session ticket buf */
     int  tp_len;                        /* transport params len */
     char tp[MAX_TRANSPORT_PARAMS_LEN];  /* transport params buf */
     int  token_len;                     /* token len */
     char token[XQC_MAX_TOKEN_LEN];      /* token buf */
-
+    // 支持的加密套件
     char *cipher_suites;                /* cipher suites */
 
     uint8_t use_0rtt;                   /* 0-rtt switch, default turned off */
+    //密钥更新的数据包阈值
     uint64_t keyupdate_pkt_threshold;   /* packet limit of a single 1-rtt key, 0 for unlimited */
 
     uint8_t mp_ack_on_any_path;
@@ -296,6 +319,17 @@ typedef enum xqc_demo_cli_task_status_s {
     TASK_STATUS_FAILED,
 } xqc_demo_cli_task_status_t;
 
+/*
+status: 任务状态,包括waiting、running、finished等。
+
+req_create_cnt: 已创建的流数量。
+
+req_sent_cnt: 已发送的请求数量。
+
+req_fin_cnt: 收到FIN的请求数量。
+
+fin_flag: 所有请求是否已完成的标志。
+*/
 typedef struct xqc_demo_cli_task_schedule_info_s {
 
     xqc_demo_cli_task_status_t  status;         /* task status */
@@ -345,12 +379,29 @@ typedef struct xqc_demo_cli_task_ctx_s {
     xqc_demo_cli_task_schedule_t    schedule;        /* current task index */
 } xqc_demo_cli_task_ctx_t;
 
-
+/*
+engine: xquic引擎上下文
+ev_engine: 处理引擎事件的 libevent 句柄
+ev_task: 处理任务事件的 libevent 句柄
+ev_kill: 终止程序的 libevent 句柄
+eb: libevent事件处理器
+log_fd: 日志文件描述符
+log_path: 日志文件路径
+keylog_fd: 密钥日志文件描述符
+args: 命令行参数
+task_ctx: 任务调度上下文
+*/
 typedef struct xqc_demo_cli_ctx_s {
     /* xquic engine context */
     xqc_engine_t    *engine;
 
     /* libevent context */
+    /*
+    ev_engine: 用于触发xquic引擎事件的处理。当xquic引擎有事件产生时,会通知此事件,从而调用注册的回调函数。
+    ev_task: 用于触发任务调度的事件。在需要进行任务调度时,会触发此事件,以运行调度逻辑。
+    ev_kill: 终止程序的事件。触发此事件将结束程序的运行。
+    eb: libevent事件处理器的句柄。
+    */
     struct event    *ev_engine;
     struct event    *ev_task;
     struct event    *ev_kill;
@@ -393,7 +444,20 @@ typedef struct xqc_demo_cli_user_path_s {
 
 } xqc_demo_cli_user_path_t;
 
-
+/*
+cid: 连接ID
+hqc_handle: 底层QUIC连接句柄
+paths: 连接的多路径信息
+active_path_cnt: 激活的路径数
+total_path_cnt: 总路径数
+ev_xxx: 各种事件的libevent句柄
+ctx: 客户端全局上下文
+task: 连接对应的任务
+send_path_standby: 发送待命路径数据
+path_status: 路径状态
+path_status_time: 路径状态时间
+path_status_timer_threshold: 路径状态定时器阈值
+*/
 typedef struct xqc_demo_cli_user_conn_s {
     
     xqc_cid_t                cid;
@@ -2406,7 +2470,8 @@ xqc_demo_cli_init_xquic_engine(xqc_demo_cli_ctx_t *ctx, xqc_demo_cli_client_args
         config.cfg_log_level = XQC_LOG_DEBUG;
         break;
     }
-
+    
+    //创建engine
     ctx->engine = xqc_engine_create(XQC_ENGINE_CLIENT, &config, 
                                      &engine_ssl_config, &callback, &transport_cbs, ctx);
     if (ctx->engine == NULL) {
@@ -2796,6 +2861,10 @@ xqc_demo_cli_task_schedule_callback(int fd, short what, void *arg)
     }
 
     /* start next round */
+    //event_add函数的功能是向libevent的事件循环注册一个事件回调。
+    //ctx->ev_task: 任务调度事件的句柄,也就是当前回调函数对应的事件。
+    //tv_task_schedule: 间隔时间,这里是一个全局的结构,表示调度的时间间隔。
+    //这样每次在回调函数结束时调用event_add,就可以让该回调函数定期重复触发
     event_add(ctx->ev_task, &tv_task_schedule);
 }
 
@@ -2834,6 +2903,23 @@ xqc_demo_cli_init_scsr(xqc_demo_cli_task_ctx_t *tctx, xqc_demo_cli_client_args_t
 
 
 /* create task info according to args */
+/*
+主要包含两种模式:
+
+单连接多请求(scmr):
+
+只创建1个任务,该任务包含所有请求
+schedule_info只有1条记录
+单连接单请求(scsr):
+
+根据请求数创建等量任务
+每个任务只包含1个请求
+schedule_info有与任务数相等的记录
+
+两者的主要区别在于:
+scmr将所有请求打包在一个任务中,共用一个连接。
+scsr每个请求一个任务,但仍共用一个连接。
+*/
 void
 xqc_demo_cli_init_tasks(xqc_demo_cli_ctx_t *ctx)
 {
@@ -2871,6 +2957,16 @@ xqc_demo_cli_start_task_manager(xqc_demo_cli_ctx_t *ctx)
     xqc_demo_cli_init_tasks(ctx);
 
     /* init and arm task timer */
+    //第一行是创建一个libevent事件,绑定调度回调函数xqc_demo_cli_task_schedule_callback。
+    //第二行则是立即触发一次这个回调函数。
+    /*
+    为什么需要立即触发一次回调呢?这是因为:
+    正常情况下,创建好事件后,需要等第一个定时周期才会触发回调。
+    但这里为了立即开始调度,需要主动触发一次回调。
+    这样可以在初始化后,立即执行一次调度逻辑,转到待调度状态,而不需要等待第一次定时器超时。
+    传入的两个参数-1和0可以忽略,这里只是为了符合回调函数签名,触发回调用不到。
+    这是因为事件在创建时可以不指定定时周期,而在之后通过调用event_add来设置定时。
+    */
     ctx->ev_task = event_new(ctx->eb, -1, 0, xqc_demo_cli_task_schedule_callback, ctx);
 
     /* immediate engage task */

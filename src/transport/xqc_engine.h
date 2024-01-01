@@ -35,7 +35,25 @@ typedef struct xqc_alpn_registration_s {
 
 } xqc_alpn_registration_t;
 
-
+/*
+eng_type: QUIC 引擎的类型(客户端或服务器端)
+eng_callback: 引擎事件的回调函数
+eng_flag: 控制引擎行为的标志
+config: QUIC 配置
+conns_hash: 通过源连接ID(SCID)查找连接的哈希表
+conns_hash_dcid: 通过目的连接ID(DCID)查找连接的哈希表,用于处理重试包
+conns_hash_sr_token: 无状态重试Token的哈希表
+conns_active_pq: 活动连接的优先级队列
+conns_wait_wakeup_pq: 等待被唤醒连接的优先级队列
+reset_sent_cnt: 跟踪无状态重置速率限制的数组
+reset_sent_cnt_cleared: 上次清零重置计数的时间戳
+tls_ctx: TLS上下文
+log: 日志工具
+rand_generator: 随机数生成器
+user_data: 自定义用户数据
+transport_cbs: 传输事件的回调函数
+alpn_reg_list: 应用层协议协商注册
+*/
 typedef struct xqc_engine_s {
     /* for engine itself */
     xqc_engine_type_t               eng_type;

@@ -13,6 +13,18 @@
 typedef struct xqc_h3_conn_s    xqc_h3_conn_t;
 typedef struct xqc_h3_stream_s  xqc_h3_stream_t;
 
+/*
+控制流、编码器流、解码器流属于单向流;
+请求流和字节流属于双向流。
+
+XQC_H3_STREAM_TYPE_CONTROL: 控制流,用于传输重要控制信息。
+XQC_H3_STREAM_TYPE_PUSH: 服务器推送流。
+XQC_H3_STREAM_TYPE_QPACK_ENCODER: 编码器流,用于HPACK编码Context更新。
+XQC_H3_STREAM_TYPE_QPACK_DECODER: 解码器流,用于HPACK解码Context更新。
+XQC_H3_STREAM_TYPE_REQUEST: 请求流,用于承载客户端的HTTP请求。
+XQC_H3_STREAM_TYPE_BYTESTREAM: 字节流,用于传输数据帧。
+XQC_H3_STREAM_TYPE_UNKNOWN: 未知或保留类型。
+*/
 typedef enum {
     /* uni stream types */
     XQC_H3_STREAM_TYPE_CONTROL          = 0x00,

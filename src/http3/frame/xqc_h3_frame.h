@@ -27,7 +27,15 @@ typedef struct xqc_h3_frame_s {
     xqc_h3_frame_pl_t   frame_payload;
 } xqc_h3_frame_t;
 
+/*
+HTTP3框架格式包含类型字段、长度字段和 payload 数据字段。
+解析一个框架需要顺序地解析这几个字段,所以定义了这几种状态表示解析过程的当前状态
 
+XQC_H3_FRM_STATE_TYPE: 表示正在解析类型字段。
+XQC_H3_FRM_STATE_LEN: 表示正在解析长度字段。
+XQC_H3_FRM_STATE_PAYLOAD: 表示正在解析payload字段。
+XQC_H3_FRM_STATE_END: 表示解析结束。
+*/
 typedef enum {
     XQC_H3_FRM_STATE_TYPE = 0,
     XQC_H3_FRM_STATE_LEN,

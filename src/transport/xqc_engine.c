@@ -79,7 +79,7 @@ xqc_engine_free_alpn_list(xqc_engine_t *engine);
 
 xqc_int_t
 xqc_set_config(xqc_config_t *dst, const xqc_config_t *src)
-{
+    {
     if (src->conn_pool_size > 0) {
         dst->conn_pool_size = src->conn_pool_size;
     }
@@ -99,7 +99,8 @@ xqc_set_config(xqc_config_t *dst, const xqc_config_t *src)
     if (src->conns_wakeup_pq_capacity > 0) {
         dst->conns_wakeup_pq_capacity = src->conns_wakeup_pq_capacity;
     }
-
+    
+    //检查源配置参数src的合法性,如果不合法直接返回错误。这包括版本数量、CID长度等的校验
     if (src->support_version_count > 0 && src->support_version_count <= XQC_SUPPORT_VERSION_MAX) {
         dst->support_version_count = src->support_version_count;
         for (int i = 0; i < src->support_version_count; ++i) {
@@ -116,7 +117,9 @@ xqc_set_config(xqc_config_t *dst, const xqc_config_t *src)
     } else if (src->cid_len > XQC_MAX_CID_LEN) {
         return XQC_ERROR;
     }
+    
 
+    //reset token 长度
     if (src->reset_token_keylen <= XQC_RESET_TOKEN_MAX_KEY_LEN) {
         dst->reset_token_keylen = src->reset_token_keylen;
 
@@ -124,7 +127,7 @@ xqc_set_config(xqc_config_t *dst, const xqc_config_t *src)
             memcpy(dst->reset_token_key, src->reset_token_key, src->reset_token_keylen);
         }
     }
-
+    
     dst->cid_negotiate = src->cid_negotiate;
     dst->cfg_log_level = src->cfg_log_level;
     dst->cfg_log_event = src->cfg_log_event;
@@ -849,6 +852,7 @@ void xqc_engine_main_logic_internal(xqc_engine_t *engine) {
 /**
  * Process all connections
  */
+//两个优先级队列配合定期唤醒的方式,可以高效地处理大量连接,进行发送、重传、探测等操作,实现QUIC协议的基本运作。
 void
 xqc_engine_main_logic(xqc_engine_t *engine)
 {
@@ -862,8 +866,9 @@ xqc_engine_main_logic(xqc_engine_t *engine)
 
     xqc_usec_t now = xqc_monotonic_timestamp();
     xqc_connection_t *conn;
-
+    
     while (!xqc_wakeup_pq_empty(engine->conns_wait_wakeup_pq)) {
+        //从等待唤醒优先队列conns_wait_wakeup_pq中弹出已经到达唤醒时间的连接。
         xqc_wakeup_pq_elem_t *el = xqc_wakeup_pq_top(engine->conns_wait_wakeup_pq);
         if (XQC_UNLIKELY(el == NULL || el->conn == NULL)) {
             xqc_log(engine->log, XQC_LOG_ERROR, "|NULL ptr, skip|");
@@ -879,6 +884,7 @@ xqc_engine_main_logic(xqc_engine_t *engine)
             conn->conn_flag &= ~XQC_CONN_FLAG_WAIT_WAKEUP;
 
             if (!(conn->conn_flag & XQC_CONN_FLAG_TICKING)) {
+                //将连接加入激活连接优先队列conns_active_pq。
                 if (0 == xqc_conns_pq_push(engine->conns_active_pq, conn, conn->last_ticked_time)) {
                     conn->conn_flag |= XQC_CONN_FLAG_TICKING;
 
@@ -891,7 +897,8 @@ xqc_engine_main_logic(xqc_engine_t *engine)
             break;
         }
     }
-
+    
+    //从conns_active_pq中依次弹出连接进行处理。
     while (!xqc_pq_empty(engine->conns_active_pq)) {
         conn = xqc_conns_pq_pop_top_conn(engine->conns_active_pq);
         if (XQC_UNLIKELY(conn == NULL)) {
@@ -900,8 +907,10 @@ xqc_engine_main_logic(xqc_engine_t *engine)
         }
 
         now = xqc_monotonic_timestamp();
+        //处理连接
         xqc_engine_process_conn(conn, now);
-
+        //XQC_UNLIKELY是一个编译器修饰符,表示条件不太可能发生
+        //直接忽略就好.
         if (XQC_UNLIKELY(conn->conn_state == XQC_CONN_STATE_CLOSED)) {
             conn->conn_flag &= ~XQC_CONN_FLAG_TICKING;
             if (!(engine->eng_flag & XQC_ENG_FLAG_NO_DESTROY)) {
@@ -913,38 +922,46 @@ xqc_engine_main_logic(xqc_engine_t *engine)
                 if ((conn->conn_flag & XQC_CONN_FLAG_WAIT_WAKEUP)) {
                     xqc_wakeup_pq_remove(engine->conns_wait_wakeup_pq, conn);
                 }
+                //根据连接下一步的唤醒时间,将连接重新放回conns_wait_wakeup_pq中等待下一次定时唤醒。
                 xqc_wakeup_pq_push(engine->conns_wait_wakeup_pq, 0, conn);
                 conn->conn_flag |= XQC_CONN_FLAG_WAIT_WAKEUP;
             }
             continue;
 
         } else {
+            //更新连接的最后处理时间last_ticked_time。
             conn->last_ticked_time = now;
-
+            
+            //调用xqc_conn_schedule_packets_to_paths,将待发送数据包调度到不同路径
             xqc_conn_schedule_packets_to_paths(conn);
-
+            
+            //如果引擎打开了sendmmsg模式,批量发送探测包、重传包和普通包。否则一条一条发送。
             if (xqc_engine_is_sendmmsg_on(engine)) {
                 xqc_conn_transmit_pto_probe_packets_batch(conn);
                 xqc_conn_retransmit_lost_packets_batch(conn);
                 xqc_conn_send_packets_batch(conn);
 
             } else {
+                
                 xqc_conn_transmit_pto_probe_packets(conn);
                 xqc_conn_retransmit_lost_packets(conn);
                 xqc_conn_send_packets(conn);
             }
-
+            
+            //如果打开了设置,调用xqc_conn_reinject_unack_packets再次注入未ACK的包
             if (conn->conn_settings.mp_enable_reinjection & XQC_REINJ_UNACK_AFTER_SEND) {
                 xqc_conn_reinject_unack_packets(conn, XQC_REINJ_UNACK_AFTER_SEND);
                 xqc_conn_send_packets(conn);
             }
-
+            
+            //检查连接状态,如果已关闭则销毁连接。
             if (XQC_UNLIKELY(conn->conn_state == XQC_CONN_STATE_CLOSED)) {
                 conn->conn_flag &= ~XQC_CONN_FLAG_TICKING;
+                //检查连接状态,如果已关闭则销毁连接
                 if (!(engine->eng_flag & XQC_ENG_FLAG_NO_DESTROY)) {
                     xqc_log(engine->log, XQC_LOG_INFO, "|destroy conn from conns_active_pq after sending|"
                             "conn:%p|%s", conn, xqc_conn_addr_str(conn));
-
+                    
                     xqc_conn_destroy(conn);
 
                 } else {
@@ -956,8 +973,9 @@ xqc_engine_main_logic(xqc_engine_t *engine)
                 }
                 continue;
             }
-
+            //计算下一次定时唤醒时间next_tick_time。
             conn->next_tick_time = xqc_conn_next_wakeup_time(conn);
+            //根据next_tick_time,将连接放回等待队列conns_wait_wakeup_pq中,等待下一次定时处理。
             if (conn->next_tick_time) {
                 if (!(conn->conn_flag & XQC_CONN_FLAG_WAIT_WAKEUP)) {
                     xqc_wakeup_pq_push(engine->conns_wait_wakeup_pq, conn->next_tick_time, conn);
@@ -969,7 +987,7 @@ xqc_engine_main_logic(xqc_engine_t *engine)
                     xqc_wakeup_pq_push(engine->conns_wait_wakeup_pq, conn->next_tick_time, conn);
                     conn->conn_flag |= XQC_CONN_FLAG_WAIT_WAKEUP;
                 }
-
+            //如果唤醒时间为0,表示异常,直接销毁连接。
             } else {
                 /* it's unexpected that conn's tick timer is unset */
                 xqc_log(conn->log, XQC_LOG_ERROR, "|destroy_connection|");
@@ -997,14 +1015,17 @@ xqc_engine_main_logic(xqc_engine_t *engine)
          */
         conn->conn_flag &= ~XQC_CONN_FLAG_TICKING;
     }
-
+    
+    //调用xqc_engine_wakeup_after计算引擎下次需要唤醒的最早时间wake_after。
+    //如果wake_after>0,也就是有定时器需要唤醒,则通过回调函数设置引擎的定时器事件。
     xqc_usec_t wake_after = xqc_engine_wakeup_after(engine);
     if (wake_after > 0) {
         engine->eng_callback.set_event_timer(wake_after, engine->user_data);
     }
-
+    //清除引擎的运行标志XQC_ENG_FLAG_RUNNING。
     engine->eng_flag &= ~XQC_ENG_FLAG_RUNNING;
-
+    
+    //打印日志表示主循环结束。
     xqc_log(engine->log, XQC_LOG_DEBUG, "|END|");
     return;
 }
@@ -1145,6 +1166,9 @@ xqc_engine_packet_process(xqc_engine_t *engine,
     xqc_cid_init_zero(&scid);
 
     /* reverse packet's dcid/scid to endpoint's scid/dcid */
+    //从数据包中解析出
+    //c-dcid -> s->scid
+    //c-scid -> s->dcid
     ret = xqc_packet_parse_cid(&scid, &dcid, engine->config->cid_len,
                                (unsigned char *)packet_in_buf, packet_in_size);
     if (XQC_UNLIKELY(ret != XQC_OK)) {
@@ -1155,6 +1179,7 @@ xqc_engine_packet_process(xqc_engine_t *engine,
     conn = xqc_engine_conns_hash_find(engine, &scid, 's');
 
     /* can't find a connection by the cid from the packet */
+    //处理首个数据包,创建conn-server
     if (XQC_UNLIKELY(conn == NULL)) {
 
         if (XQC_PACKET_IS_LONG_HEADER(packet_in_buf)) {
@@ -1175,6 +1200,7 @@ xqc_engine_packet_process(xqc_engine_t *engine,
 
         } else {
             /* stateless reset is pretended to be a short header packet */
+            //初始stateless reset.
             ret = xqc_engine_process_sr_pkt(engine, packet_in_buf,
                                             packet_in_size, &scid, recv_time,
                                             &conn);

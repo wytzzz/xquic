@@ -575,6 +575,25 @@ typedef void (*xqc_datagram_mss_updated_notify_pt)(xqc_connection_t *conn,
  * |                              Transport                                       |
  * +------------------------------------------------------------------------------+
  */
+
+/*
+
+server_accept: 当服务器接受新连接时调用。服务器端必需。
+server_refuse: 当服务器拒绝连接时调用。服务器端必需。
+stateless_reset: 当无状态重置发生时调用。
+write_socket/write_mmsg: 委托实际的socket写操作。应用选择其一实现。
+write_socket_ex/write_mmsg_ex: 扩展的写回调。
+conn_update_cid_notify: 通知连接ID更新。必需。
+save_token: 客户端回调以保存重试token。客户端必需。
+save_session_cb: 客户端回调以保存TLS会话数据。0-RTT需要。
+save_tp_cb: 客户端回调以保存传输参数。
+cert_verify_cb: 客户端证书验证回调。
+ready_to_create_path_notify: 通知客户端可以创建更多路径。多路径需要。
+path_created_notify: 通知新路径创建。多路径需要。
+path_removed_notify: 通知路径移除。多路径需要。
+conn_closing: 通知连接关闭。可选。
+conn/path_peer_addr_changed_notify: 通知对等地址变化。
+conn_cert_cb: 连接证书回调。*/
 typedef struct xqc_transport_callbacks_s {
     /**
      * accept new connection callback. REQUIRED only for server
@@ -677,6 +696,16 @@ typedef struct xqc_transport_callbacks_s {
 /**
  * @brief QUIC connection callback functions for Application-layer-Protocol.
  */
+
+/*
+
+xqc_conn_callbacks_t结构体定义了QUIC连接的应用层回调函数:
+conn_create_notify: 连接创建通知回调。服务器端必需,客户端可选。在连接创建后被调用,用于创建应用层上下文。
+conn_close_notify: 连接关闭通知回调。客户端和服务器端均必需。在QUIC连接关闭后被调用,用于释放在conn_create_notify中创建的应用层上下文。
+conn_handshake_finished: 握手完成回调。客户端和服务器端可选。
+conn_ping_acked: 主动PING应答回调。客户端和服务器端可选。
+
+总之,conn_create_notify和conn_close_notify回调是必需的,它们分别在连接创建和关闭时调用,用于管理应用层的上下文。*/
 typedef struct xqc_conn_callbacks_s {
 
     /**
@@ -711,6 +740,18 @@ typedef struct xqc_conn_callbacks_s {
 
 
 /* QUIC layer stream callback functions */
+/*
+xqc_stream_callbacks_t结构体定义了xquic流的回调函数。
+
+主要包含以下回调函数:
+stream_read_notify: 流读回调,当流上有数据可读时触发。
+stream_write_notify: 流写回调,当流可以继续写入数据时触发。
+stream_create_notify: 流创建回调,当流创建时触发。
+stream_close_notify: 流关闭回调,当流关闭时触发。
+stream_closing_notify: 流重置回调,当收到RESET_STREAM时触发。
+
+这些回调函数可以配合xquic流接口,实现应用层与QUIC流的数据收发交互。
+*/
 typedef struct xqc_stream_callbacks_s {
     /**
      * stream read callback function. REQUIRED for both client and server
@@ -818,6 +859,25 @@ typedef enum {
     XQC_DATA_QOS_PROBING = 7,
 } xqc_data_qos_level_t;
 
+/*
+xqc_cc_params_t结构体定义了xquic的拥塞控制算法参数。
+
+主要字段含义:
+
+customize_on: 是否自定义参数,非0表示自定义
+init_cwnd: 初始拥塞窗口大小
+min_cwnd: 最小拥塞窗口大小
+expect_bw: 期望带宽,kbps
+max_expect_bw: 最大期望带宽,kbps
+cc_optimization_flags: 拥塞控制优化标记
+copa_delta_base: Copa算法 Delta 基础值
+copa_delta_max: Copa算法 Delta 最大值
+copa_delta_ai_unit: Copa算法 Delta AI单位
+通过设置这些参数,可以调整拥塞控制的初始阈值、窗口大小、对竞争的敏感程度等。
+init_cwnd和min_cwnd决定初始网络探测的速率。
+expect_bw和max_expect_bw用于带宽估计。
+Copa相关参数调整其应对竞争的策略。
+*/
 typedef struct xqc_cc_params_s {
     uint32_t    customize_on;
     uint32_t    init_cwnd;
@@ -845,6 +905,37 @@ typedef struct xqc_scheduler_params_u {
     uint32_t    pto_cnt_thr;
 } xqc_scheduler_params_t;
 
+/*
+
+xqc_congestion_control_callback_t 定义了拥塞控制算法的回调函数:
+
+xqc_cong_ctl_size: 初始化回调,用于内存分配。
+
+xqc_cong_ctl_init: 连接初始化回调,支持传入拥塞控制参数。
+
+xqc_cong_ctl_on_lost: 当检测到包丢失时调用,根据算法减小拥塞窗口。
+
+xqc_cong_ctl_on_ack: 当包被确认时调用,根据算法增加拥塞窗口。
+
+xqc_cong_ctl_get_cwnd: 当发送包时调用,判断是否可以发送。
+
+xqc_cong_ctl_reset_cwnd: 当1-RTT内全部包丢失时调用,重置拥塞窗口。
+
+xqc_cong_ctl_in_slow_start: 判断连接是否在慢启动阶段。
+
+xqc_cong_ctl_in_recovery: 判断连接是否在恢复阶段。
+
+xqc_cong_ctl_restart_from_idle: 由BBR和Cubic使用。
+
+xqc_cong_ctl_on_ack_multiple_pkts: BBR使用,处理多个包确认。
+
+xqc_cong_ctl_init_bbr: 初始化BBR。
+
+xqc_cong_ctl_get_pacing_rate: 获取pacing rate。
+
+xqc_cong_ctl_get_bandwidth_estimate: 获取带宽估计。
+
+xqc_cong_ctl_info_cb: BBR信息回调。*/
 typedef struct xqc_congestion_control_callback_s {
     /* Callback on initialization, for memory allocation */
     size_t (*xqc_cong_ctl_size)(void);
@@ -966,6 +1057,30 @@ XQC_EXPORT_PUBLIC_API XQC_EXTERN const xqc_reinj_ctl_callback_t xqc_dgram_reinj_
  * @struct xqc_config_t
  * QUIC config parameters
  */
+
+/*
+cfg_log_xxx: 日志相关配置
+
+conn_pool_size: 连接内存池大小
+
+streams_hash_bucket_size: 流哈希表桶数
+
+conns_hash_bucket_size: 连接哈希表桶数
+
+conns_active/wakeup_pq_capacity: 连接优先级队列容量
+
+support_version_list/count: 支持的QUIC版本列表
+
+cid_len: 默认连接ID长度
+
+cid_negotiate: 服务端CID协商开关
+
+reset_token_key/len: 状态重置token密钥
+
+sendmmsg_on: sendmmsg批量发送开关
+
+enable_h3_ext: 启用HTTP3扩展开关
+*/
 typedef struct xqc_config_s {
     /* log level */
     xqc_log_level_t cfg_log_level;
@@ -1010,6 +1125,14 @@ typedef struct xqc_config_s {
      * NOTICE: if length of client's original DCID is not equal to cid_len, server will always
      * generate its own cid, despite of the enable of cid negotiation.
      */
+
+    /*
+    仅针对服务端,是否与客户端协商CID。
+    如果值非0,表示会协商CID。
+    如果值为0,表示不协商CID,沿用客户端的原始DCID。
+    即使配置不协商,如果客户端DCID长度与服务端cid_len不符,服务端仍会生成新的CID。
+    这样可以避免短包头中无法解析DCID的情况。
+    */
     uint8_t         cid_negotiate;
 
     /* used to generate stateless reset token */
@@ -1036,6 +1159,16 @@ typedef struct xqc_config_s {
 /**
  * @brief engine callback functions.
  */
+
+/*
+set_event_timer: 设置引擎事件循环的定时器回调。这允许将QUIC引擎与外部事件循环集成。
+log_callbacks: 日志记录回调,用于写入日志,必需的。
+cid_generate_cb: 生成连接ID的自定义回调,服务器端可选。允许自定义CID生成逻辑。
+keylog_cb: 用于调试的日志记录密钥的回调。
+realtime_ts: 获取实时时间戳的回调。如果未设置,默认使用 gettimeofday() 的实现。
+monotonic_ts: 获取单调时间戳的回调。如果未设置,默认使用 gettimeofday()。
+总之,它提供了一种将QUIC引擎与外部逻辑集成和定制其行为的方法,特别是在事件循环、CID生成、日志记录和时间戳方面。
+*/
 typedef struct xqc_engine_callback_s {
     /* timer callback for event loop */
     xqc_set_event_timer_pt          set_event_timer;
@@ -1060,6 +1193,21 @@ typedef struct xqc_engine_callback_s {
 } xqc_engine_callback_t;
 
 
+/*
+这个结构体xqc_engine_ssl_config_t定义了xquic引擎中与TLS相关的配置参数。
+
+主要字段含义:
+private_key_file: 服务器私钥文件路径
+cert_file: 服务器证书文件路径
+ciphers: 支持的加密套件列表
+groups: 支持的密钥交换组列表
+session_timeout: 会话生存时间,单位秒
+session_ticket_key_data: 会话ticket密钥数据(服务端)
+session_ticket_key_len: 会话ticket密钥长度(服务端)
+这些参数用于配置xquic在TLS握手时的加密参数选择,以及会话resumption的相关行为。
+需要注意的是,其中私钥、证书等文件仅针对服务器端,客户端不需要。
+xquic通过读取这些配置来初始化TLS上下文,从而支持QUIC的加密传输。
+*/
 typedef struct xqc_engine_ssl_config_s {
     char       *private_key_file;           /* For server */
     char       *cert_file;                  /* For server */
@@ -1082,6 +1230,16 @@ typedef enum {
 /**
  * @brief connection tls config for client
  */
+/*
+客户端在创建新连接之前会从存储中加载会话数据。服务器可以验证session ticket来恢复TLS状态。
+这个配置结构将会话数据附加到新的QUIC连接上,以启用0-RTT会话恢复。cert_verify_flag控制验证过程。
+session_ticket_data: 包含从客户端本地存储加载的session ticket数据的缓冲区。这是从save_session_cb回调保存的之前连接的数据。
+session_ticket_len: session ticket 数据缓冲区的长度。
+transport_parameter_data: 包含从session ticket派生的传输参数的数据缓冲区。
+transport_parameter_data_len: 传输参数数据的长度。
+cert_verify_flag: 一个位图标志,表示需要验证的证书,取值定义在xqc_cert_verify_flag_e中。
+Session ticket和传输参数允许QUIC连接恢复TLS会话,避免全握手
+*/
 typedef struct xqc_conn_ssl_config_s {
     /**
      * session ticket data buffer.
@@ -1125,6 +1283,27 @@ typedef enum {
 } xqc_multipath_version_t;
 
 
+/*
+
+pacing_on: 拥塞控制的发送端打包调度开关
+ping_on: keepalive的PING开关
+cong_ctrl_callback: 拥塞控制算法回调
+cc_params: 拥塞控制参数
+so_sndbuf: socket发送缓冲区大小
+sndq_packets_used_max: 发送队列最大数据包数量
+linger: 连接关闭linger时间
+proto_version: QUIC版本
+init/idle_time_out: 连接空闲超时时间
+spurious_loss_detect_on: 错报损耗检测开关
+anti_amplification_limit: 反放大限制数
+keyupdate_pkt_threshold: 密钥更新数据包阈值
+max_pkt_out_size: 最大发送包大小
+max_datagram_frame_size: 最大数据报文大小
+enable_multipath: 多路径支持开关
+mp_xxx: 多路径相关设置
+scheduler_callback: 多路径调度器回调
+reinj_ctl_callback: 重传控制回调
+standby_path_probe_timeout: 备用路径探测超时*/
 typedef struct xqc_conn_settings_s {
     int                         pacing_on;          /* default: 0 */
     int                         ping_on;            /* client sends PING to keepalive, default:0 */
@@ -1290,6 +1469,43 @@ typedef struct xqc_path_metrics_s {
 } xqc_path_metrics_t;
 
 
+/*
+send_count: 已发送数据包数量
+
+lost_count: 丢包数量
+
+tlp_count: 尾部丢包探测重传数量
+
+spurious_loss_count: 错报丢包数量
+
+lost_dgram_count: 丢失的数据报数量
+
+srtt/min_rtt: 平滑RTT和最小RTT
+
+inflight_bytes: 在途数据量
+
+early_data_flag: 0-RTT状态标记
+
+recv_count: 已接收数据包数量
+
+spurious_loss_detect_on: 错报检测开关
+
+conn_err: 连接错误码
+
+ack_info: ACK信息
+
+enable_multipath: 多路径支持情况
+
+mp_state: 多路径状态
+
+total_rebind_count/valid: 总重绑定次数和成功次数
+
+paths_info: 各路径指标
+
+conn_info: 连接信息
+
+alpn: 应用协议名
+*/
 typedef struct xqc_conn_stats_s {
     uint32_t            send_count;
     uint32_t            lost_count;
