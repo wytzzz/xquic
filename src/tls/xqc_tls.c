@@ -92,20 +92,25 @@ xqc_tls_check_session_ticket_timeout(SSL_SESSION *session)
 }
 
 
+//session ticket允许客户端缓存会话信息,在进行会话恢复时直接使用,避免完整的握手流程。
+//这段代码就是将服务端返回的session ticket信息设置到客户端SSL对象中,以便后续建立缩短的会话恢复握手。
+
 xqc_int_t
 xqc_tls_cli_set_session_data(xqc_tls_t *tls, char *session_data, size_t session_data_len)
 {
     xqc_int_t ret = XQC_OK;
     int ssl_ret;
     SSL *ssl = tls->ssl;
-
+    
+    //使用session数据创建BIO内存缓冲。
     BIO *bio = BIO_new_mem_buf(session_data, session_data_len);
     if (bio == NULL) {
         xqc_log(tls->log, XQC_LOG_DEBUG, "|new mem buf error|%s",
                 ERR_error_string(ERR_get_error(), NULL));
         return -XQC_TLS_INTERNAL;
     }
-
+    
+    //通过PEM_read_bio_SSL_SESSION()从BIO读取并解析出SSL_SESSION对象。
     SSL_SESSION *session = PEM_read_bio_SSL_SESSION(bio, NULL, 0, NULL);
     if (session == NULL) {
         ret = -XQC_TLS_INTERNAL;
@@ -113,14 +118,16 @@ xqc_tls_cli_set_session_data(xqc_tls_t *tls, char *session_data, size_t session_
                 ERR_error_string(ERR_get_error(), NULL));
         goto end;
     }
-
+    
+    //调用xqc_tls_check_session_ticket_timeout()校验session ticket的超时时间是否合法
     if (!xqc_tls_check_session_ticket_timeout(session)) {
         ret = -XQC_TLS_INVALID_ARGUMENT;
         xqc_log(tls->log, XQC_LOG_DEBUG, "|check session timeout failed|%s",
                 ERR_error_string(ERR_get_error(), NULL));
         goto end;
     }
-
+    
+    //通过SSL_set_session()设置session到SSL对象里。
     ssl_ret = SSL_set_session(ssl, session);
     if (ssl_ret != XQC_SSL_SUCCESS) {
         ret = -XQC_TLS_INTERNAL;
@@ -178,6 +185,7 @@ xqc_tls_set_alpn(SSL *ssl, const char *alpn)
 }
 
 
+//主要是围绕配置ssl的主机名、ALPN、session ticket、证书验证等操作,为后续的TLS握手初始化必要的参数。
 xqc_int_t
 xqc_tls_init_client_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
 {
@@ -186,9 +194,11 @@ xqc_tls_init_client_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
     SSL        *ssl = tls->ssl;
 
     /* configure ssl as client */
+    //通过SSL_set_connect_state()配置ssl为客户端模式。
     SSL_set_connect_state(ssl);
 
     /* If remote host is NULL, send "localhost" as SNI. */
+    //设置SSL的主机名SNI为配置的hostname,如果为空则默认为"localhost"。
     if (NULL == cfg->hostname || 0 == strlen(cfg->hostname)) {
         hostname = "localhost";
 
@@ -202,6 +212,7 @@ xqc_tls_init_client_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
      * set alpn in ClientHello. for client, xquic set alpn for every ssl instance. while server set 
      * the alpn select callback function while initializing tls context. 
      */
+    //调用xqc_tls_set_alpn()设置SSL的ALPN参数。
     ret = xqc_tls_set_alpn(ssl, cfg->alpn);
     if (ret != XQC_OK) {
         xqc_log(tls->log, XQC_LOG_ERROR, "|xqc_create_client_ssl|set alpn error|");
@@ -209,6 +220,7 @@ xqc_tls_init_client_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
     }
 
     /* set session data and enable early data */
+    //如果提供了session ticket,调用xqc_tls_cli_set_session_data()设置会话信息,开启session ticket功能。
     if (cfg->session_ticket && cfg->session_ticket_len > 0) {
         if (xqc_tls_cli_set_session_data(tls, cfg->session_ticket,
                                          cfg->session_ticket_len) == XQC_OK)
@@ -219,6 +231,7 @@ xqc_tls_init_client_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
     }
 
     /* set verify if flag set */
+    //如果需要证书验证,调用相关SSL API设置验证模式和回调函数xqc_ssl_cert_verify_cb。
     if (cfg->cert_verify_flag & XQC_TLS_CERT_FLAG_NEED_VERIFY) { 
         if (X509_VERIFY_PARAM_set1_host(SSL_get0_param(ssl), hostname,
                                         strlen(hostname)) != XQC_SSL_SUCCESS)
@@ -228,7 +241,7 @@ xqc_tls_init_client_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
             ret = -XQC_TLS_INTERNAL;
             goto end;
         }
-
+        //验证模式和整数验证回调函数.
         SSL_set_verify(ssl, SSL_VERIFY_PEER, xqc_ssl_cert_verify_cb);
     }
 
@@ -260,6 +273,7 @@ xqc_tls_create_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
     int ssl_ret;
 
     /* create ssl instance */
+    //调用SSL_new()创建SSL实例,并赋值给tls->ssl。
     SSL *ssl = SSL_new(xqc_tls_ctx_get_ssl_ctx(tls->ctx));
     if (ssl == NULL) {
         xqc_log(tls->log, XQC_LOG_ERROR, "|SSL_new return null|%s|",
@@ -273,6 +287,7 @@ xqc_tls_create_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
      * make tls the app data of ssl instance, which will be used in callback
      * functions defined in xqc_ssl_cbs.h
      */
+    //通过SSL_set_app_data()设置tls为ssl的应用数据,后续回调函数可以通过ssl获取tls。
     ssl_ret = SSL_set_app_data(ssl, tls);
     if (ssl_ret != XQC_SSL_SUCCESS) {
         xqc_log(tls->log, XQC_LOG_ERROR, "|ssl set app data error|%s|",
@@ -280,7 +295,8 @@ xqc_tls_create_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
         ret = -XQC_TLS_INTERNAL;
         goto end;
     }
-
+    
+    //设置ssl使用xquic定义的QUIC方法xqc_ssl_quic_method。
     ssl_ret = SSL_set_quic_method(ssl, &xqc_ssl_quic_method);
     if (ssl_ret != XQC_SSL_SUCCESS) {
         xqc_log(tls->log, XQC_LOG_ERROR, "|ssl set quic method error|",
@@ -290,6 +306,7 @@ xqc_tls_create_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
     }
 
     /* set local transport parameter */
+    //设置本地传输参数到ssl。
     ssl_ret = SSL_set_quic_transport_params(tls->ssl, cfg->trans_params, cfg->trans_params_len);
     if (ssl_ret != XQC_SSL_SUCCESS) {
         xqc_log(tls->log, XQC_LOG_ERROR, "|set transport params error|%s|",
@@ -300,6 +317,7 @@ xqc_tls_create_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
 
 
     /* the difference of initialization between client and server */
+    //根据tls类型(客户端或服务端),调用xqc_tls_init_server_ssl()或xqc_tls_init_client_ssl()进行初始化。
     if (tls->type == XQC_TLS_TYPE_SERVER) {
         ret = xqc_tls_init_server_ssl(tls, cfg);
 
@@ -392,17 +410,20 @@ xqc_int_t
 xqc_tls_do_handshake(xqc_tls_t *tls)
 {
     xqc_ssl_handshake_res_t res = xqc_ssl_do_handshake(tls->ssl);
+    //握手错误,返回
     if (res == XQC_SSL_HSK_RES_FAIL) {
         xqc_log(tls->log, XQC_LOG_ERROR, "|TLS handshake error:%s|",
                 ERR_error_string(ERR_get_error(), NULL));
         return -XQC_TLS_INTERNAL;
     }
-
+    
+    //异步接口,需要继续等待
     if (res == XQC_SSL_HSK_RES_WAIT) {
         return XQC_OK;
     }
 
     /* SSL_do_handshake returns 1 when handshake has completed or False Started */
+    //完成握手,回调更新状态.
     tls->flag |= XQC_TLS_FLAG_HSK_COMPLETED;
     if (tls->cbs->hsk_completed_cb) {
         tls->cbs->hsk_completed_cb(tls->user_data);
@@ -481,6 +502,7 @@ xqc_tls_init_client(xqc_tls_t *tls, const xqc_cid_t *odcid)
     }
 
     /* do handshake to generate ClientHello */
+    //客户端建立,启动握手
     return xqc_tls_do_handshake(tls);
 }
 
@@ -562,18 +584,22 @@ xqc_tls_process_crypto_data(xqc_tls_t *tls, xqc_encrypt_level_t level,
                 level, ERR_error_string(ERR_get_error(), NULL));
         return -XQC_TLS_INTERNAL;
     }
-
+    
+    //未完成,调用xqc_tls_do_handshake继续驱动握手。
+    //接收到crypto_data,驱动握手.
     if (!(tls->flag & XQC_TLS_FLAG_HSK_COMPLETED)) {
         /* handshake not completed, continue handshake */
         if (xqc_tls_do_handshake(tls) != XQC_OK) {
             xqc_log(tls->log, XQC_LOG_ERROR, "|xqc_do_handshake failed |");
             return -XQC_TLS_DO_HANDSHAKE_ERROR;
         }
-
+    
+    //已完成,调用SSL_process_quic_post_handshake处理握手后数据。
     } else {
         /* handshake finished, process NewSessionTicket */
         ret = SSL_process_quic_post_handshake(ssl);
-
+        
+        //根据OpenSSL返回值判断是否成功处理数据。
         if (ret != XQC_SSL_SUCCESS) {
             err = SSL_get_error(ssl, ret);
             switch (err) {
@@ -1140,18 +1166,21 @@ xqc_tls_get_ssl(xqc_tls_t *tls)
  *                        quic method callback functions
  * ============================================================================
  */
-
+//秘钥进化
 int 
 xqc_tls_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
     const SSL_CIPHER *cipher, const uint8_t *secret, size_t secret_len)
 {
     xqc_int_t ret;
+    //从SSL对象获取对应的QUIC连接的xqc_tls_t对象tls。
     xqc_tls_t *tls = SSL_get_app_data(ssl);
 
     /* try to process transport parameter if ssl parsed the quic_transport_params extension */
+    //尝试处理transport parameter,如果TLS解析了quic_transport_params扩展的数据的话。
     xqc_tls_process_trans_param(tls);
 
     /* create crypto instance if not created */
+    //如果指定加密级别的crypto对象还未创建,则创建它
     if (NULL == tls->crypto[level]) {
         tls->crypto[level] = xqc_crypto_create(
             xqc_tls_get_cipher_id(ssl, (xqc_encrypt_level_t)level, tls->no_crypto), tls->log);
@@ -1162,6 +1191,7 @@ xqc_tls_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
     }
 
     /* save application traffic secret */
+    //如果是application级别的密钥,则把密钥保存为application traffic secret。
     if (level == ssl_encryption_application) {
         ret = xqc_crypto_save_application_traffic_secret_0(tls->crypto[level], secret,
                                                            secret_len, XQC_KEY_TYPE_RX_READ);
@@ -1173,6 +1203,7 @@ xqc_tls_set_read_secret(SSL *ssl, enum ssl_encryption_level_t level,
     }
 
     /* derive and install read key */
+    //
     xqc_crypto_t *crypto = tls->crypto[level];
     ret = xqc_crypto_derive_keys(crypto, secret, secret_len, XQC_KEY_TYPE_RX_READ);
     if (ret != XQC_OK) {

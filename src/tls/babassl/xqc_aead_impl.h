@@ -25,6 +25,7 @@
 #define XQC_AEAD_OVERHEAD_IMPL(obj, cln)            (0) + (obj)->taglen
 
 /* inner definition, MUST NOT be called directly */
+//用于初始化AEAD模式的加密,参数包括:
 #define DO_NOT_CALL_XQC_AEAD_INIT(obj, a, tgl) do {                         \
     obj->aead       = a;                                                    \
     obj->keylen     = EVP_CIPHER_key_length(obj->aead);                     \
@@ -35,6 +36,7 @@
 } while(0)
 
 /* inner definition, MUST NOT be called directly */
+//用于初始化非AEAD模式的加密,参数包括:
 #define DO_NOT_CALL_XQC_CIPHER_INIT(obj, c) do {                            \
     obj->cipher     = c;                                                    \
     obj->keylen     = EVP_CIPHER_key_length(obj->cipher);                   \

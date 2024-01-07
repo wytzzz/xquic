@@ -3392,15 +3392,18 @@ xqc_conn_handshake_complete(xqc_connection_t *conn)
     if (conn->enable_multipath) {
         conn->conn_flag |= XQC_CONN_FLAG_MP_WAIT_SCID;
     }
-
+    
+    //设置握手完成标志。
     /* conn's handshake is complete when TLS stack has reported handshake complete */
     conn->conn_flag |= XQC_CONN_FLAG_HANDSHAKE_COMPLETED;
-
+    
+    //服务端特殊处理:确认握手、发送握手完成帧、发送新token
     if (conn->conn_type == XQC_CONN_TYPE_SERVER) {
         /* the TLS handshake is considered confirmed at the server when the handshake completes */
         xqc_conn_handshake_confirmed(conn);
 
         /* send handshake_done immediately */
+        //发送handshake done frame
         ret = xqc_write_handshake_done_frame_to_packet(conn);
         if (ret < 0) {
             xqc_log(conn->log, XQC_LOG_WARN, "|write_handshake_done err|");
@@ -3419,20 +3422,24 @@ xqc_conn_handshake_complete(xqc_connection_t *conn)
          * client MUST discard Initial keys when it first sends a Handshake packet,
          * equivalent to handshake complete and can send 1RTT
          */
+        //客户端特殊处理:丢弃初始密钥数据
         xqc_send_queue_drop_initial_packets(conn);
     }
 
     /* 0RTT rejected, send in 1RTT again */
+    //判断条件:握手完成、客户端有0-RTT、没有结果标志。
     if ((conn->conn_flag & XQC_CONN_FLAG_HANDSHAKE_COMPLETED) 
         && ((conn->conn_type == XQC_CONN_TYPE_CLIENT && conn->conn_flag & XQC_CONN_FLAG_HAS_0RTT)
             || conn->conn_type == XQC_CONN_TYPE_SERVER) 
         && !(conn->conn_flag & XQC_CONN_FLAG_0RTT_OK) 
         && !(conn->conn_flag & XQC_CONN_FLAG_0RTT_REJ)) 
-    {
+        {
+        //调用xqc_tls_is_early_data_accepted获取0-RTT结果。
         int accept = xqc_tls_is_early_data_accepted(conn->tls);
+        //如果是拒绝,调用xqc_conn_early_data_reject,执行拒绝逻辑
         if (accept == XQC_TLS_EARLY_DATA_REJECT) {
             xqc_conn_early_data_reject(conn);
-
+        //如果是接受,调用xqc_conn_early_data_accept,执行接受逻辑。
         } else if (accept == XQC_TLS_EARLY_DATA_ACCEPT) {
             xqc_conn_early_data_accept(conn);
         }
@@ -4154,11 +4161,13 @@ xqc_conn_check_handshake_complete(xqc_connection_t *conn)
 {
     /* check tx keys after handshake complete */
     xqc_conn_check_tx_key(conn);
-
+    
+    //判断连接状态是否为已建立,且握手完成标志未设置
     if (!(conn->conn_flag & XQC_CONN_FLAG_HANDSHAKE_COMPLETED)
         && conn->conn_state == XQC_CONN_STATE_ESTABED)
     {
         xqc_log(conn->log, XQC_LOG_DEBUG, "|HANDSHAKE_COMPLETED|conn:%p|", conn);
+        //调用xqc_conn_handshake_complete进行握手完成后的处理。
         xqc_conn_handshake_complete(conn);
         if (conn->app_proto_cbs.conn_cbs.conn_handshake_finished) {
             conn->app_proto_cbs.conn_cbs.conn_handshake_finished(conn, conn->user_data, conn->proto_data);
@@ -4822,6 +4831,7 @@ xqc_conn_check_transport_params(xqc_connection_t *conn, const xqc_transport_para
     return XQC_OK;
 }
 
+//xquic在收到对端传输参数后的回调处理
 void
 xqc_conn_tls_transport_params_cb(const uint8_t *tp, size_t len, void *user_data)
 {
@@ -4838,6 +4848,7 @@ xqc_conn_tls_transport_params_cb(const uint8_t *tp, size_t len, void *user_data)
     memset(&params, 0, sizeof(xqc_transport_params_t));
 
     /* decode peer's transport parameter */
+    //传输参数解码到xqc_transport_params_t结构params中。
     ret = xqc_decode_transport_params(&params, tp_type, tp, len);
     if (ret != XQC_OK) {
         XQC_CONN_ERR(conn, TRA_TRANSPORT_PARAMETER_ERROR);
@@ -4861,6 +4872,7 @@ xqc_conn_tls_transport_params_cb(const uint8_t *tp, size_t len, void *user_data)
     }
 
     /* set remote transport param */
+    //将对端传输参数设置到连接对象conn中。
     ret = xqc_conn_set_remote_transport_params(conn, &params, tp_type);
     if (ret != XQC_OK) {
         xqc_log(conn->log, XQC_LOG_ERROR,
@@ -4883,6 +4895,7 @@ xqc_conn_tls_transport_params_cb(const uint8_t *tp, size_t len, void *user_data)
     /* sr token will only present in server's transport parameter, it means
        client have already confirmed server's cid, associate the sr token with
        server's cid */
+    //如果包含sr_token,将其保存到连接的dcid对象中,并插入hash表。
     if (params.stateless_reset_token_present) {
         /* it is supposed to be only one existing cid in the dcid set, find the
            first node and copy the sr token to that cid */
@@ -4936,6 +4949,7 @@ xqc_conn_tls_transport_params_cb(const uint8_t *tp, size_t len, void *user_data)
     }
 
     /* notify application layer to save transport parameter */
+    //通过回调通知应用层保存传输参数
     if (conn->transport_cbs.save_tp_cb) {
         char tp_buf[8192] = {0};
         ssize_t written = xqc_write_transport_params(tp_buf, sizeof(tp_buf), &params);
@@ -4962,6 +4976,7 @@ xqc_create_hs_buffer(int buf_size)
     return buf;
 }
 
+//TLS产生的加密数据都可以根据加密级别归类存储,后续可以按需取出对应级别的数据发送。
 xqc_int_t
 xqc_conn_tls_crypto_data_cb(xqc_encrypt_level_t level, const uint8_t *data,
     size_t len, void *user_data)

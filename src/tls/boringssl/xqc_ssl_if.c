@@ -90,6 +90,9 @@ xqc_ssl_do_handshake(SSL *ssl)
 again:
     ERR_clear_error();
     ret = SSL_do_handshake(ssl);
+    //返回负值表示错误,进一步判断是等待IO还是真正错误。
+    //等待IO返回XQC_SSL_HSK_RES_WAIT。
+    //真正错误返回XQC_SSL_HSK_RES_FAIL
     if (ret <= 0) {
         switch (SSL_get_error(ssl, ret)) {
         case SSL_ERROR_WANT_READ:

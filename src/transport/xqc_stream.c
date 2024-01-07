@@ -947,13 +947,16 @@ xqc_read_crypto_stream(xqc_stream_t *stream)
 int 
 xqc_crypto_stream_on_read(xqc_stream_t *stream, void *user_data)
 {
+    //获取加密级别encrypt_level和当前连接状态cur_state
     XQC_DEBUG_PRINT
     xqc_encrypt_level_t encrypt_level = stream->stream_encrypt_level;
     xqc_conn_state_t cur_state = stream->stream_conn->conn_state;
     xqc_conn_state_t next_state;
 
     xqc_connection_t * conn = stream->stream_conn;
-
+    
+    //根据加密级别和状态判断下一连接状态next_state:
+    //初始化级别更新初始握手状态
     if (encrypt_level == XQC_ENC_LEV_INIT) {
         switch (cur_state) {
         case XQC_CONN_STATE_CLIENT_INITIAL_SENT:
@@ -966,7 +969,10 @@ xqc_crypto_stream_on_read(xqc_stream_t *stream, void *user_data)
         default:
             next_state = cur_state;
         }
-
+    
+    //握手密钥级别更新握手状态
+    //如果在init状态下收到任意hsk包,则直接进入到XQC_CONN_STATE_CLIENT_HANDSHAKE_RECVD
+    //并打开发送开关
     } else if (encrypt_level == XQC_ENC_LEV_HSK) {
         switch (cur_state) {
         case XQC_CONN_STATE_CLIENT_INITIAL_SENT:
@@ -989,7 +995,8 @@ xqc_crypto_stream_on_read(xqc_stream_t *stream, void *user_data)
         default:
             next_state = cur_state;
         }
-
+    
+    //如果收到任意1rtt包,则进入到
     } else if (encrypt_level == XQC_ENC_LEV_1RTT) {
         switch (cur_state) {
         case XQC_CONN_STATE_ESTABED:
@@ -1024,6 +1031,7 @@ xqc_crypto_stream_on_read(xqc_stream_t *stream, void *user_data)
 
 #define MIN_CRYPTO_FRAME_SIZE 8
 
+//TLS握手层不断获取数据,打包成CRYPTO帧发送出去,实现握手加密数据的传输。
 int 
 xqc_crypto_stream_send(xqc_stream_t *stream, 
     xqc_list_head_t *crypto_data_list, xqc_pkt_type_t pkt_type)
@@ -1036,12 +1044,15 @@ xqc_crypto_stream_send(xqc_stream_t *stream,
     xqc_list_head_t *head = crypto_data_list;
     xqc_list_head_t *pos, *next;
     xqc_hs_buffer_t *buf = NULL;
-
+    
+    //遍历加密数据列表crypto_data_list。
     xqc_list_for_each_safe(pos, next, head) {
         buf = xqc_list_entry(pos, xqc_hs_buffer_t, list_head);
         if (buf->data_len > 0) {
+            //对每个数据缓冲区buf,计算需要发送的数据长度。
             uint64_t send_data_num = stream->stream_send_offset + buf->data_len;
             size_t offset = 0;
+            //在可发送数据长度内,循环创建数据包发送
             while (stream->stream_send_offset < send_data_num) {
                 unsigned int header_size = xqc_crypto_frame_header_size(stream->stream_send_offset,
                                                                         buf->data_len - offset);
@@ -1049,6 +1060,7 @@ xqc_crypto_stream_send(xqc_stream_t *stream,
                 if (packet_out == NULL) {
                     return -XQC_EWRITE_PKT;
                 }
+                //调用xqc_gen_crypto_frame生成CRYPTO帧。
                 n_written = xqc_gen_crypto_frame(packet_out,
                                                  stream->stream_send_offset,
                                                  buf->data + offset,
@@ -1058,7 +1070,7 @@ xqc_crypto_stream_send(xqc_stream_t *stream,
                     xqc_maybe_recycle_packet_out(packet_out, stream->stream_conn);
                     return n_written;
                 }
-
+                //更新已发送偏移量stream_send_offset。
                 offset += send_data_written;
                 stream->stream_send_offset += send_data_written;
                 packet_out->po_used_size += n_written;
@@ -1071,7 +1083,8 @@ xqc_crypto_stream_send(xqc_stream_t *stream,
                         packet_out->po_pkt.pkt_num, packet_out->po_used_size, n_written,
                         xqc_pkt_type_2_str(packet_out->po_pkt.pkt_type),
                         xqc_frame_type_2_str(packet_out->po_frame_types), now);
-
+                
+                //添加数据包到高优先级发送队列。
                 xqc_send_queue_move_to_high_pri(&packet_out->po_list, stream->stream_conn->conn_send_queue);
             }
         }
@@ -1102,10 +1115,11 @@ xqc_crypto_stream_on_write(xqc_stream_t *stream, void *user_data)
     if (encrypt_level == XQC_ENC_LEV_INIT) {
         pns = XQC_PNS_INIT;
         pkt_type = XQC_PTYPE_INIT;
-
+        
         switch (cur_state) {
         case XQC_CONN_STATE_CLIENT_INIT:
             crypto_data_list = &conn->initial_crypto_data_list;
+            //init->init_send
             next_state = XQC_CONN_STATE_CLIENT_INITIAL_SENT;
             break;
 
@@ -1125,9 +1139,11 @@ xqc_crypto_stream_on_write(xqc_stream_t *stream, void *user_data)
     } else if (encrypt_level == XQC_ENC_LEV_HSK) {
         pns = XQC_PNS_HSK;
         pkt_type = XQC_PTYPE_HSK;
-
+        
+        //在hsk阶段,发送了任意包,则进入到XQC_CONN_STATE_ESTABED状态.
         switch (cur_state) {
         case XQC_CONN_STATE_CLIENT_HANDSHAKE_RECVD:
+            //在这个阶段一直等待握手完成
             crypto_data_list = &conn->hsk_crypto_data_list;
             if (conn->conn_flag & XQC_CONN_FLAG_TLS_HSK_COMPLETED) {
                 next_state = XQC_CONN_STATE_ESTABED;

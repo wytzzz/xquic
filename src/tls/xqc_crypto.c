@@ -78,6 +78,9 @@ xqc_ckm_free(xqc_crypto_km_t *ckm)
 }
 
 /* set aead suites, cipher suites and digest suites */
+//这个函数创建了QUIC连接加密需要的crypto对象,主要进行了以下初始化:
+
+
 xqc_crypto_t *
 xqc_crypto_create(uint32_t cipher_id, xqc_log_t *log)
 {
@@ -98,7 +101,13 @@ xqc_crypto_create(uint32_t cipher_id, xqc_log_t *log)
         xqc_ckm_init(&crypto->keys.tx_ckm[i]);
         xqc_ckm_init(&crypto->keys.rx_ckm[i]);
     }
-
+    
+    //根据cipher_id设置加密套件,支持AES-128-GCM、AES-256-GCM、CHACHA20-POLY1305等。
+    //初始化pp_aead对象,用于1-RTT数据的AEAD加密。
+    //初始化hp_cipher对象,用于header保护的加密。
+    //初始化消息摘要md对象
+    //初始化密钥对象keys,包括tx/rx密钥容器等
+    //为每个key phase初始化密钥材料对象tx/rx_ckm
     switch (cipher_id) {
     /* TLS_AES_128_GCM_SHA256 */
     case XQC_TLS13_AES_128_GCM_SHA256:
@@ -447,6 +456,7 @@ xqc_crypto_derive_header_protection_key(xqc_crypto_t *crypto, uint8_t *dest, siz
 
 #define XQC_MAX_KNP_LEN 64
 
+//了Xquic中从secrets导出数据包保护所需的密钥材料
 xqc_int_t
 xqc_crypto_derive_keys(xqc_crypto_t *crypto, const uint8_t *secret, size_t secretlen,
     xqc_key_type_t type)
@@ -457,7 +467,8 @@ xqc_crypto_derive_keys(xqc_crypto_t *crypto, const uint8_t *secret, size_t secre
     size_t  keylen = 0,                 ivlen = 0,                 hplen = 0;
 
     xqc_int_t ret;
-
+    
+    //从secret派生出数据包保护的key、iv和header protection key。
     ret = xqc_crypto_derive_packet_protection_key(crypto, key, keycap, &keylen, secret, secretlen);
     if (ret != XQC_OK || keylen <= 0) {
         xqc_log(crypto->log, XQC_LOG_ERROR,
@@ -484,7 +495,8 @@ xqc_crypto_derive_keys(xqc_crypto_t *crypto, const uint8_t *secret, size_t secre
     xqc_crypto_km_t *p_ckm = NULL;
     xqc_vec_t *p_hp = NULL;
     void **p_hp_ctx = NULL;
-
+    
+    //根据密钥用途(发送或接收),保存到对应加密CONTEXT的密钥字段中。
     switch (type) {
     case XQC_KEY_TYPE_RX_READ:
         p_ckm = &crypto->keys.rx_ckm[crypto->key_phase];
@@ -502,7 +514,7 @@ xqc_crypto_derive_keys(xqc_crypto_t *crypto, const uint8_t *secret, size_t secre
         xqc_log(crypto->log, XQC_LOG_ERROR, "|illegal crypto secret type|type:%d|", type);
         return -XQC_TLS_INVALID_ARGUMENT;
     }
-
+    
     if (xqc_vec_assign(&p_ckm->key, key, keylen) != XQC_OK) {
         return -XQC_TLS_DERIVE_KEY_ERROR;
     }
@@ -514,7 +526,8 @@ xqc_crypto_derive_keys(xqc_crypto_t *crypto, const uint8_t *secret, size_t secre
     if (xqc_vec_assign(p_hp, hp, hplen) != XQC_OK) {
         return -XQC_TLS_DERIVE_KEY_ERROR;
     }
-
+    
+    //如果启用了AEAD保护,用key和iv创建AEAD算法CONTEXT,保存到ckm中
     if (crypto->pp_aead.aead) {
         xqc_aead_ctx_free(p_ckm->aead_ctx);
         p_ckm->aead_ctx = xqc_aead_ctx_new(&crypto->pp_aead, type, key, ivlen);
@@ -522,7 +535,8 @@ xqc_crypto_derive_keys(xqc_crypto_t *crypto, const uint8_t *secret, size_t secre
             return -XQC_TLS_DERIVE_KEY_ERROR;
         }
     }
-
+    
+    //如果启用了包头保护,用hp key创建header protection CONTEXT,保存到对应字段
     if (crypto->hp_cipher.cipher) {
         xqc_hp_ctx_free(*p_hp_ctx);
         *p_hp_ctx = xqc_hp_ctx_new(&crypto->hp_cipher, hp);

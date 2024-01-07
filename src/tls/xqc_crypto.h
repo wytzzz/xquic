@@ -75,6 +75,15 @@ typedef xqc_int_t (*xqc_hp_mask_pt)(const xqc_hdr_protect_cipher_t *hp_cipher, v
     const uint8_t *sample, size_t samplelen);
 
 
+/*
+xqc_pkt_protect_aead_t包含了一个AEAD算法需要的全部信息 - 算法实现、密钥参数、加解密方法。
+aead:AEAD算法的具体实现,比如BoringSSL的EVP_AEAD。
+keylen:密钥长度。
+noncelen:nonce长度。
+taglen:认证标签长度。
+encrypt:加密方法。
+decrypt:解密方法
+*/
 struct xqc_pkt_protect_aead_s {
     /*
      * implementation handler for aead
@@ -119,6 +128,12 @@ typedef struct xqc_vec_s {
     size_t              len;      /* byte count of base */
 } xqc_vec_t;
 
+/*
+key: 密钥。
+iv: 初始向量。
+aead_ctx: AEAD算法的上下文。
+secret: 应用数据流的密钥材料,用于1-RTT的密钥更新。
+*/
 typedef struct xqc_crypto_km_s {
     xqc_vec_t           key;
     xqc_vec_t           iv;
@@ -128,12 +143,15 @@ typedef struct xqc_crypto_km_s {
     xqc_vec_t           secret;
 } xqc_crypto_km_t;
 
+//xqc_crypto_keys_t 结构体用于保存 QUIC 连接加密所需的密钥材料。
 typedef struct xqc_crypto_keys_s {
     /* packet payload protect key */
+    //rx_ckm/tx_ckm:用于报文负载保护的密钥材料,rx/tx表示接收/发送方向,数组大小为key phase的数量。
     xqc_crypto_km_t     rx_ckm[XQC_KEY_PHASE_CNT];
     xqc_crypto_km_t     tx_ckm[XQC_KEY_PHASE_CNT];
 
     /* packet header protect key */
+    //rx_hp/tx_hp:用于报头保护的密钥向量,rx/tx表示接收/发送方向。
     xqc_vec_t           rx_hp;
     xqc_vec_t           tx_hp;
     void               *rx_hp_ctx;
@@ -141,6 +159,15 @@ typedef struct xqc_crypto_keys_s {
 } xqc_crypto_keys_t;
 
 
+/*
+xqc_crypto_t包含了加密一个QUIC连接所需的全部加密CONTEXT,包括算法、密钥等信息。
+pp_aead: 负责包payload保护的AEAD模式加密算法句柄。
+hp_cipher: 负责包头保护的非AEAD加密算法句柄。
+md: 用于HKDF操作的消息摘要算法句柄。
+keys: 加密使用的密钥、IV等关键材料。
+log: 日志句柄。
+key_phase: 密钥阶段,1-RTT有0和1两个阶段。
+*/
 typedef struct xqc_crypto_s {
 
     /* aead suites for packet payload protection */
