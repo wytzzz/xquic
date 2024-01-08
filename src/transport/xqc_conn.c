@@ -5760,16 +5760,19 @@ xqc_conn_handle_stateless_reset(xqc_connection_t *conn,
     if (NULL == conn || NULL == sr_token) {
         return -XQC_EPARAM;
     }
-
+    
+    //如果已经处于关闭状态,则直接退出.
     if (conn->conn_state >= XQC_CONN_STATE_DRAINING) {
         xqc_log(conn->log, XQC_LOG_INFO, "|conn closing, ignore pkt");
         return XQC_OK;
     }
 
     /* compare received stateless reset token with the ones peer sent */
+    //对比当前受到的st和之前维护的cid对应的st是否相同.
     xqc_list_for_each_safe(pos, next, &conn->dcid_set.cid_set.list_head) {
         cid = xqc_list_entry(pos, xqc_cid_inner_t, list);
-
+        
+        //根据cid和sr_token进行对比.
         res = xqc_memcmp(sr_token, cid->cid.sr_token,
                          XQC_STATELESS_RESET_TOKENLEN);
         if (0 == res) {
@@ -5778,6 +5781,7 @@ xqc_conn_handle_stateless_reset(xqc_connection_t *conn,
             xqc_log_event(conn->log, TRA_STATELESS_RESET, conn);
 
             /* stateless reset received, close connection */
+            //执行reset.
             xqc_conn_reset(conn);
 
             goto end;

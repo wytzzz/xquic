@@ -1441,6 +1441,7 @@ xqc_gen_reset_token(xqc_cid_t *cid, unsigned char *token, int token_len, char *k
 
                      Figure 6: Stateless Reset Packet
  */
+
 xqc_int_t
 xqc_gen_reset_packet(xqc_cid_t *cid, unsigned char *dst_buf, char *key,
     size_t keylen, size_t max_len, xqc_random_generator_t *rand_generator)
@@ -1496,10 +1497,13 @@ xqc_int_t
 xqc_packet_parse_stateless_reset(const unsigned char *buf, size_t buf_size,
     const uint8_t **sr_token)
 {
+    //10.3
+    //如果接收方需要使用CID，则生成的21字节的最小大小并不能保证Stateless Reset包和其他数据包无法区分。
+    //为了达到这个目的，终端应该（SHOULD）确保它发送的所有数据包，至少要比携带最小CID长度的数据包长22个字节，并根据需要添加PADDING帧。
     if (buf_size <= XQC_STATELESS_RESET_PKT_MIN_LEN) {
         return -XQC_EILLPKT;
     }
-
+    
     *sr_token = buf + buf_size - XQC_STATELESS_RESET_TOKENLEN;
     return XQC_OK;
 }

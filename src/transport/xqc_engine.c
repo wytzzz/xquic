@@ -640,7 +640,8 @@ xqc_engine_send_reset(xqc_engine_t *engine, xqc_cid_t *dcid,
            Stateless Reset Looping */
         return XQC_OK;
     }
-
+    
+    //发送stateless reset数据包
     max_sr_pkt_len = xqc_min(max_sr_pkt_len, XQC_STATELESS_RESET_PKT_MAX_LEN);
     size = xqc_gen_reset_packet(dcid, buf, engine->config->reset_token_key,
                                 engine->config->reset_token_keylen,
@@ -648,7 +649,8 @@ xqc_engine_send_reset(xqc_engine_t *engine, xqc_cid_t *dcid,
     if (size < 0) {
         return size;
     }
-
+    
+    //调用回调
     stateless_cb = engine->transport_cbs.stateless_reset;
     if (stateless_cb) {
         size = (xqc_int_t)stateless_cb(buf, (size_t)size, peer_addr, peer_addrlen,
@@ -1057,7 +1059,8 @@ xqc_engine_handle_stateless_reset(xqc_engine_t *engine,
     if (NULL == sr_token) {
         return -XQC_ERROR;
     }
-
+    
+    //查找hash值.
     hash = xqc_hash_string(sr_token, XQC_STATELESS_RESET_TOKENLEN);
     str.data = (unsigned char *)sr_token;
     str.len = XQC_STATELESS_RESET_TOKENLEN;
@@ -1072,6 +1075,7 @@ xqc_engine_handle_stateless_reset(xqc_engine_t *engine,
     }
 
     *c = conn;
+    //开始执行stateless_reset
     ret = xqc_conn_handle_stateless_reset(conn, sr_token);
     if (XQC_OK != ret) {
         /* sr_token state not match between engine and connection */
@@ -1181,7 +1185,7 @@ xqc_engine_packet_process(xqc_engine_t *engine,
     conn = xqc_engine_conns_hash_find(engine, &scid, 's');
 
     /* can't find a connection by the cid from the packet */
-    //处理首个数据包,创建conn-server
+    //处理首个数据包,创建conn-server. 
     if (XQC_UNLIKELY(conn == NULL)) {
 
         if (XQC_PACKET_IS_LONG_HEADER(packet_in_buf)) {
@@ -1199,7 +1203,11 @@ xqc_engine_packet_process(xqc_engine_t *engine,
                     return -XQC_ECREATE_CONN;
                 }
             }
-
+        
+        //如果首个数据包,并且没有解析为long header,则尝试解析为stateless reset packet
+        //10.3
+        //终端必须（MUST）发送形式类似短包头的数据包的Stateless Reset包。
+        //另外，终端必须（MUST）将任何以有效无状态重置令牌结尾的数据包视为Stateless Reset包，其他QUIC版本可能允许使用长包头
         } else {
             /* stateless reset is pretended to be a short header packet */
             //初始stateless reset.
@@ -1210,13 +1218,14 @@ xqc_engine_packet_process(xqc_engine_t *engine,
                 /* SR processed */
                 goto after_process;
             }
-
+        
             xqc_log(engine->log, XQC_LOG_DEBUG, "|not a stateless reset pkt, "
                     "will try send stateless reset pkt");
         }
     }
 
     /* can't find a conneciton, send stateless reset */
+    //在接收数据包的时候无法解析有效的cid,则发送 stateless reset
     if (NULL == conn) {
         if (xqc_engine_schedule_reset(engine, peer_addr, peer_addrlen, recv_time) != XQC_OK) {
             return -XQC_ECONN_NFOUND;

@@ -1545,6 +1545,7 @@ xqc_server_write_socket_ex(uint64_t path_id,
 }
 
 
+//调用socket直接写入对端的ip地址.
 ssize_t
 xqc_server_stateless_reset(const unsigned char *buf, size_t size,
     const struct sockaddr *peer_addr, socklen_t peer_addrlen,
