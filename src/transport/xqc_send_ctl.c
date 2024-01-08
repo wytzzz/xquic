@@ -754,7 +754,7 @@ xqc_send_ctl_on_packet_sent(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc_
         send_ctl->ctl_last_inflight_pkt_sent_time = now;
         xqc_send_ctl_update_cwnd_limited(send_ctl);
     }
-
+    //发送conn_close
     if (packet_out->po_frame_types & XQC_FRAME_BIT_CONNECTION_CLOSE) {
         if (send_ctl->ctl_conn->conn_close_send_time == 0) {
             send_ctl->ctl_conn->conn_close_send_time = now;

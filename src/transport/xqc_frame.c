@@ -624,13 +624,14 @@ xqc_process_crypto_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
     packet_in->pi_frame_types |= XQC_FRAME_BIT_CRYPTO;
 
     /* check token, only validate token with Initial/CRYPTO packet, but not with Initial/ACK */
+    //init包进行地址校验
     if (!(conn->conn_flag & XQC_CONN_FLAG_TOKEN_OK)
         && conn->conn_type == XQC_CONN_TYPE_SERVER
         && packet_in->pi_pkt.pkt_type == XQC_PTYPE_INIT)
     {
         if (xqc_conn_check_token(conn, conn->conn_token, conn->conn_token_len) == XQC_OK) {
             conn->conn_flag |= XQC_CONN_FLAG_TOKEN_OK;
-
+ 
         } else {
             xqc_log(conn->log, XQC_LOG_INFO, "|check_token fail|conn:%p|%s|", conn, xqc_conn_addr_str(conn));
         }
@@ -851,6 +852,7 @@ xqc_process_new_conn_id_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in
 
     /* insert into sr_token-connection hash, for processing stateless reset
        packet */
+    //10.3.1 
     ret = xqc_insert_conns_hash(conn->engine->conns_hash_sr_token, conn,
                                 new_conn_cid.sr_token,
                                 XQC_STATELESS_RESET_TOKENLEN);
@@ -971,7 +973,7 @@ xqc_process_conn_close_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
     } else {
         XQC_CONN_CLOSE_MSG(conn, "remote close");
     }
-
+    
     if (conn->conn_state < XQC_CONN_STATE_CLOSING) {
         ret = xqc_conn_immediate_close(conn);
         if (ret != XQC_OK) {
@@ -979,6 +981,7 @@ xqc_process_conn_close_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
                     "|xqc_conn_immediate_close error|");
         }
     }
+    // 10.2.2一旦终端接收到CONNECTION_CLOSE帧，即表示其对端正在关闭或正在耗尽，就进入耗尽状态
     conn->conn_state = XQC_CONN_STATE_DRAINING;
     xqc_conn_closing(conn);
 

@@ -459,7 +459,8 @@ xqc_engine_create(xqc_engine_type_t engine_type,
     if (engine->conns_hash_dcid == NULL) {
         goto fail;
     }
-
+    
+    //初始化state_less
     engine->conns_hash_sr_token = xqc_engine_conns_hash_create(engine->config);
     if (engine->conns_hash_sr_token == NULL) {
         goto fail;
@@ -1031,6 +1032,7 @@ xqc_engine_main_logic(xqc_engine_t *engine)
 }
 
 
+//处理stateless_reset
 xqc_int_t
 xqc_engine_handle_stateless_reset(xqc_engine_t *engine,
     const unsigned char *buf, size_t buf_size, xqc_usec_t recv_time,
@@ -1342,7 +1344,8 @@ process:
 #else
     xqc_conn_process_packet_recved_path(conn, &scid, path_id, packet_in_size, recv_time);
 #endif
-
+    
+    //成功处理数据后,重置空闲超时定时器
     xqc_timer_set(&conn->conn_timer_manager, XQC_TIMER_CONN_IDLE,
                   recv_time, xqc_conn_get_idle_timeout(conn) * 1000);
 

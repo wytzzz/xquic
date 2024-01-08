@@ -814,7 +814,7 @@ xqc_gen_conn_close_frame(xqc_packet_out_t *packet_out,
         dst_buf += reason_len;
     }
 #endif
-
+    
     packet_out->po_frame_types |= XQC_FRAME_BIT_CONNECTION_CLOSE;
 
     return dst_buf - begin;
@@ -856,7 +856,7 @@ xqc_parse_conn_close_frame(xqc_packet_in_t *packet_in, uint64_t *err_code, xqc_c
     p += reason_len;
 
     packet_in->pos = p;
-
+    //接收到conn_close
     packet_in->pi_frame_types |= XQC_FRAME_BIT_CONNECTION_CLOSE;
 
     xqc_log_event(conn->log, TRA_FRAMES_PROCESSED, XQC_FRAME_CONNECTION_CLOSE, *err_code);

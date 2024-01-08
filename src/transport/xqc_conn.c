@@ -2510,9 +2510,10 @@ xqc_conn_close(xqc_engine_t *engine, const xqc_cid_t *cid)
     }
 
     /* close connection after all data sent and acked or XQC_TIMER_LINGER_CLOSE timeout */
+    //
     xqc_usec_t now = xqc_monotonic_timestamp();
     xqc_usec_t pto = xqc_conn_get_max_pto(conn);
-
+    //优化关闭
     if (conn->conn_settings.linger.linger_on && !xqc_send_queue_out_queue_empty(conn->conn_send_queue)) {
         conn->conn_flag |= XQC_CONN_FLAG_LINGER_CLOSING;
         xqc_usec_t linger_timeout = conn->conn_settings.linger.linger_timeout;
@@ -2520,7 +2521,8 @@ xqc_conn_close(xqc_engine_t *engine, const xqc_cid_t *cid)
                       (linger_timeout ? linger_timeout : 3 * pto));
         goto end;
     }
-
+    
+    //立即关闭.
     ret = xqc_conn_immediate_close(conn);
     if (ret) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|xqc_conn_immediate_close error|ret:%d|", ret);
@@ -2572,19 +2574,23 @@ xqc_conn_shutdown(xqc_connection_t *conn)
     xqc_usec_t          now;
 
     now = xqc_monotonic_timestamp();
+    //设置drain定时器,等待3倍的最大PTO时间.是为了完成数据发送和接受ack
     xqc_usec_t pto = xqc_conn_get_max_pto(conn);
     if (!xqc_timer_is_set(&conn->conn_timer_manager, XQC_TIMER_CONN_DRAINING)) {
         xqc_timer_set(&conn->conn_timer_manager, XQC_TIMER_CONN_DRAINING, now, 3 * pto);
     }
-
+    
+    //丢弃send队列中未发送的数据包。
     xqc_send_queue_drop_packets(conn);
-
+    
+    //对每个路径disable所有的定时器,包括探测定时器、续传定时器等。防止shutdown期间继续发送探测等数据包。
     xqc_list_for_each_safe(pos, next, &conn->conn_paths_list) {
         path = xqc_list_entry(pos, xqc_path_ctx_t, path_list);
         for (int i = 0; i <= XQC_TIMER_LOSS_DETECTION; i++) {
             xqc_timer_unset(&path->path_send_ctl->path_timer_manager, i);
         }
     }
+    //等待drain定时器超时后,连接进入closed状态,可以释放资源。
 }
 
 
@@ -2592,11 +2598,13 @@ xqc_int_t
 xqc_conn_immediate_close(xqc_connection_t *conn)
 {
     int ret;
-
+    
+    //检查连接状态,如果已经在关闭状态则直接返回。
     if (conn->conn_state >= XQC_CONN_STATE_DRAINING) {
         return XQC_OK;
     }
-
+    
+    //如果是服务器端,且还未收到Initial包,则直接关闭连接
     if (!(conn->conn_flag & XQC_CONN_FLAG_INIT_RECVD)
        && conn->conn_type == XQC_CONN_TYPE_SERVER)
     {
@@ -2604,7 +2612,8 @@ xqc_conn_immediate_close(xqc_connection_t *conn)
         xqc_conn_log(conn, XQC_LOG_ERROR, "|server cannot send CONNECTION_CLOSE before initial pkt received|");
         return XQC_OK;
     }
-
+    
+    //将连接状态设置为CLOSING关闭中
     if (conn->conn_state < XQC_CONN_STATE_CLOSING) {
         xqc_conn_shutdown(conn);
 
@@ -2620,6 +2629,9 @@ xqc_conn_immediate_close(xqc_connection_t *conn)
      * frame SHOULD respond to any incoming packet that can be decrypted with another packet containing a CONNECTION_CLOSE
      * frame.  Such an endpoint SHOULD limit the number of packets it generates containing a CONNECTION_CLOSE frame.
      */
+    //在关闭时间内,如果收到对端包,需要回复CONNECTION_CLOSE frame。
+    //统计并限制回复CLOSE frame的总次数,防止无限回复。
+    //10.2.2 接收CONNECTION_CLOSE帧的终端可以（MAY）在进入draining状态之前发送包含CONNECTION_CLOSE帧的单个数据包，如果合适，使用NO_ERROR代码
     if (conn->conn_close_count < MAX_RSP_CONN_CLOSE_CNT) {
         ret = xqc_write_conn_close_to_packet(conn, conn->conn_err);
         if (ret) {
@@ -3119,7 +3131,8 @@ xqc_conn_get_lastest_rtt(xqc_engine_t *engine, const xqc_cid_t *cid)
     return path->path_send_ctl->ctl_latest_rtt;
 }
 
-
+//token包含了对端地址和过期时间信息。
+//QUIC服务器可以通过解析token中的地址来验证客户端地址,避免被用作拒绝服务攻击的放大器。
 xqc_int_t
 xqc_conn_check_token(xqc_connection_t *conn, const unsigned char *token, unsigned token_len)
 {
@@ -3134,6 +3147,7 @@ xqc_conn_check_token(xqc_connection_t *conn, const unsigned char *token, unsigne
 
     struct sockaddr *sa = (struct sockaddr *)conn->peer_addr;
     const unsigned char *pos = token;
+    //判断是IPv4还是IPv6地址,在token第一个字节记录地址类型标志:0表示IPv4,1表示IPv6。
     if (*pos++ & 0x80) {
         struct in6_addr *in6 = (struct in6_addr *)pos;
         struct sockaddr_in6 *sa6 = (struct sockaddr_in6 *)sa;
@@ -3155,7 +3169,7 @@ xqc_conn_check_token(xqc_connection_t *conn, const unsigned char *token, unsigne
             return XQC_ERROR;
         }
         xqc_log(conn->log, XQC_LOG_DEBUG, "|peer_addr:%s|", inet_ntoa(sa4->sin_addr));
-
+        //拷贝 peer 地址到 token 中,IPv4拷贝4字节,IPv6拷贝16字节
         if (memcmp(&sa4->sin_addr, pos, sizeof(struct in_addr)) != 0) {
             xqc_log(conn->log, XQC_LOG_INFO, "|ipv4 not match|token_addr:%s|", inet_ntoa(*in4));
             return XQC_ERROR;
@@ -3166,6 +3180,7 @@ xqc_conn_check_token(xqc_connection_t *conn, const unsigned char *token, unsigne
     /* check token lifetime */
     uint32_t *expire = (uint32_t *)pos;
     *expire = ntohl(*expire);
+    //计算token的过期时间:当前时间戳 + constant 的过期时间间隔。
     uint64_t now = xqc_monotonic_timestamp() / 1000000;
     if (*expire < now) {
         xqc_log(conn->log, XQC_LOG_INFO, "|token_expire|expire:%ud|now:%ui|", *expire, now);
@@ -3211,7 +3226,8 @@ xqc_conn_gen_token(xqc_connection_t *conn, unsigned char *token, unsigned *token
 
         *token_len = 21;
     }
-
+    
+    //超时时间
     uint32_t expire = xqc_monotonic_timestamp() / 1000000 + XQC_TOKEN_EXPIRE_DELTA;
     xqc_log(conn->log, XQC_LOG_DEBUG, "|expire:%ud|", expire);
     expire = htonl(expire);
@@ -3838,6 +3854,7 @@ xqc_conn_confirm_cid(xqc_connection_t *c, xqc_packet_t *pkt)
 }
 
 
+//8.地址校验成功标志
 /**
  * client will validate server's addr by:
  * 1) successful processing of Initial packet.
@@ -3871,6 +3888,7 @@ xqc_conn_server_validate_address(xqc_connection_t *c, xqc_packet_in_t *pi)
              * when server close its own CID, and server reached its anti-amplification limit,
              * client MAY send an Initial packet with PING/PADDING on PTO with server's CID
              */
+            //8.1
             if (c->scid_set.user_scid.cid_len >= XQC_CONN_ADDR_VALIDATION_CID_ENTROPY
                 && xqc_cid_in_cid_set(&c->scid_set.cid_set, &c->original_dcid) == NULL
                 && xqc_cid_in_cid_set(&c->scid_set.cid_set, &pi->pi_pkt.pkt_dcid) != NULL)
@@ -5018,6 +5036,9 @@ xqc_conn_tls_crypto_data_cb(xqc_encrypt_level_t level, const uint8_t *data,
      * should limit the length of crypto data when the TLS layer generates unlimited data
      * or when the client sends duplicate ClientHello, etc.
      */
+    //7.5 Cryptographic Message Buffering
+    //握手完成后，如果终端无法缓冲CRYPTO帧中的数据，它可以（MAY）丢弃该CRYPTO帧和后续的CRYPTO帧，
+    //或者它也可用CRYPTO_BUFFER_EXCEEDED错误码关闭连接
     conn->crypto_data_total_len += len;
     if (conn->crypto_data_total_len > XQC_CONN_MAX_CRYPTO_DATA_TOTAL_LEN) {
         xqc_log(conn->log, XQC_LOG_ERROR,
