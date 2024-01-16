@@ -715,6 +715,7 @@ xqc_process_ack_frame(xqc_connection_t *conn, xqc_packet_in_t *packet_in)
     /* 对端还不支持MP，或还未握手确认时，使用 initial path */
     xqc_path_ctx_t *path = conn->conn_initial_path;
     xqc_pn_ctl_t *pn_ctl = xqc_get_pn_ctl(conn, path);
+    //处理单个packet的处理.
     ret = xqc_send_ctl_on_ack_received(path->path_send_ctl, pn_ctl, conn->conn_send_queue,
                                        &ack_info, packet_in->pkt_recv_time, 1);
 

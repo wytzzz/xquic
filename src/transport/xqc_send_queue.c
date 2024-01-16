@@ -335,11 +335,13 @@ xqc_send_queue_move_to_high_pri(xqc_list_head_t *pos, xqc_send_queue_t *send_que
 }
 
 
+//从lost_packet生成一个新的packet.
 void
 xqc_send_queue_copy_to_lost(xqc_packet_out_t *packet_out, xqc_send_queue_t *send_queue)
 {
     xqc_connection_t *conn = send_queue->sndq_conn;
-
+    
+    //将原包packet_out的内容复制到新包new_po。
     xqc_packet_out_t *new_po = xqc_packet_out_get(send_queue);
     if (!new_po) {
         XQC_CONN_ERR(conn, XQC_EMALLOC);
@@ -347,14 +349,19 @@ xqc_send_queue_copy_to_lost(xqc_packet_out_t *packet_out, xqc_send_queue_t *send
     }
 
     xqc_packet_out_copy(new_po, packet_out);
+    //清除新包中和之前特定时刻相关的标志和frame
+    //移除packet中的ackframe,因为对应新的重传包来说,之前时刻的ackframe是没有意义的.
     xqc_packet_out_remove_ack_frame(new_po);
-
+    
+    //去掉新包的PTO路径指定标记。
     if (new_po->po_path_flag & XQC_PATH_SPECIFIED_BY_PTO) {
         new_po->po_path_flag &= ~XQC_PATH_SPECIFIED_BY_PTO;
     }
-
+    
+    //将新包插入重传队列sndq_lost_packets。
     xqc_send_queue_insert_lost(&new_po->po_list, &send_queue->sndq_lost_packets);
     send_queue->sndq_packets_used++;
+    //标记当前包为被重传.
     packet_out->po_flag |= XQC_POF_RETRANSED;
 }
 

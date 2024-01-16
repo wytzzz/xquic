@@ -83,34 +83,34 @@ typedef struct xqc_po_stream_frame_s {
 } xqc_po_stream_frame_t;
 
 typedef struct xqc_packet_out_s {
-    xqc_packet_t            po_pkt;
+    xqc_packet_t            po_pkt;  // 数据包基础信息,如包类型、包号等。
     xqc_list_head_t         po_list;
 
     /* pointers should carefully assign in xqc_packet_out_copy */
-    unsigned char          *po_buf;
-    unsigned char          *po_ppktno;
-    unsigned char          *po_payload;
-    xqc_packet_out_t       *po_origin;          /* point to original packet before retransmitted */
-    void                   *po_user_data;       /* used to differ inner PING and user PING */
-    unsigned char          *po_padding;         /* used to reassemble packets carrying new header */
+    unsigned char          *po_buf;  //数据包数据缓冲区。
+    unsigned char          *po_ppktno;  //: 包号字段在po_buf中的偏移。
+    unsigned char          *po_payload; //数据payload在po_buf中的偏移。
+    xqc_packet_out_t       *po_origin;  //如果是重传,指向原始发送包。        /* point to original packet before retransmitted */
+    void                   *po_user_data;  //用户自定义数据。     /* used to differ inner PING and user PING */
+    unsigned char          *po_padding;  // 补位字段偏移,用于头部更改。      /* used to reassemble packets carrying new header */
 
-    size_t                  po_buf_cap;         /* capcacity of po_buf */
-    unsigned int            po_buf_size;        /* size of po_buf can be used */
-    unsigned int            po_used_size;
-    unsigned int            po_enc_size;        /* size of po after being encrypted */
-    unsigned int            po_ack_offset;
+    size_t                  po_buf_cap;        /* capcacity of po_buf */
+    unsigned int            po_buf_size;     //po_buf可用总大小。     /* size of po_buf can be used */
+    unsigned int            po_used_size; //po_buf中已使用大小
+    unsigned int            po_enc_size;   //加密后的总大小      /* size of po after being encrypted */
+    unsigned int            po_ack_offset; //ACK frame偏移。
     xqc_packet_out_flag_t   po_flag;
     /* Largest Acknowledged in ACK frame, initiated to be 0 */
-    xqc_packet_number_t     po_largest_ack;
-    xqc_usec_t              po_sent_time;
-    xqc_frame_type_bit_t    po_frame_types;
+    xqc_packet_number_t     po_largest_ack;  // ACK中确认的最大包号。
+    xqc_usec_t              po_sent_time; //发送时间。
+    xqc_frame_type_bit_t    po_frame_types; // 包含的frame类型位标志。
 
     /* the stream related to stream frame */
-    xqc_po_stream_frame_t   po_stream_frames[XQC_MAX_STREAM_FRAME_IN_PO];
+    xqc_po_stream_frame_t   po_stream_frames[XQC_MAX_STREAM_FRAME_IN_PO]; // STREAM frame信息。
     unsigned int            po_stream_frames_idx;
 
-    uint32_t                po_origin_ref_cnt;  /* reference count of original packet */
-    uint32_t                po_acked;
+    uint32_t                po_origin_ref_cnt;  //原始包引用计数。 /* reference count of original packet */
+    uint32_t                po_acked;//确认标志
     uint64_t                po_delivered;       /* the sum of delivered data before sending packet P */
     xqc_usec_t              po_delivered_time;  /* the time of last acked packet before sending packet P */
     xqc_usec_t              po_first_sent_time; /* the time of first sent packet during current sample period */
@@ -118,20 +118,20 @@ typedef struct xqc_packet_out_s {
 
     /* For BBRv2 */
     /* the inflight bytes when the packet is sent (including itself) */
-    uint64_t                po_tx_in_flight; 
+    uint64_t                po_tx_in_flight;  //发送时的在途字节数
     /* how many packets have been lost when the packet is sent */
-    uint32_t                po_lost; 
+    uint32_t                po_lost; //发送时已丢失的包数
 
     /* only meaningful if it contains a DATAGRAM frame */
-    uint64_t                po_dgram_id;
+    uint64_t                po_dgram_id; //路由标志
 
     /* Multipath */
     uint8_t                 po_path_flag;
-    uint64_t                po_path_id;
+    uint64_t                po_path_id; //发送路径ID。
     unsigned int            po_cc_size; /* TODO: check cc size != send size */
 
     /* Reinjection */
-    uint64_t                po_stream_offset;
+    uint64_t                po_stream_offset; //重新注入时的流偏移。
     uint64_t                po_stream_id;
 
     /* PMTUD Probing */

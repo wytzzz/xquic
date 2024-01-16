@@ -13,14 +13,14 @@ typedef struct xqc_send_queue_s {
     xqc_connection_t           *sndq_conn;
 
     /* send queue for packets, should be in connection level */
-    xqc_list_head_t             sndq_send_packets;                  /* xqc_packet_out_t to send */
-    xqc_list_head_t             sndq_send_packets_high_pri;         /* xqc_packet_out_t to send with high priority */
-    xqc_list_head_t             sndq_unacked_packets[XQC_PNS_N];    /* xqc_packet_out_t */
+    xqc_list_head_t             sndq_send_packets;                  //就绪发送的数据包链表 /* xqc_packet_out_t to send */
+    xqc_list_head_t             sndq_send_packets_high_pri;         //高优先级的数据包链表 /* xqc_packet_out_t to send with high priority */
+    xqc_list_head_t             sndq_unacked_packets[XQC_PNS_N];    //每个数据空间的未ACK数据包链 /* xqc_packet_out_t */
 
-    xqc_list_head_t             sndq_lost_packets;                  /* xqc_packet_out_t */
-    xqc_list_head_t             sndq_free_packets;                  /* xqc_packet_out_t */
-    xqc_list_head_t             sndq_buff_1rtt_packets;             /* xqc_packet_out_t buff 1RTT before handshake complete */
-    xqc_list_head_t             sndq_pto_probe_packets;             /* xqc_packet_out_t */
+    xqc_list_head_t             sndq_lost_packets;                  //丢失的数据包链表 /* xqc_packet_out_t */
+    xqc_list_head_t             sndq_free_packets;                  //空闲的数据包链表 /* xqc_packet_out_t */
+    xqc_list_head_t             sndq_buff_1rtt_packets;             // 握手前缓存的 1-RTT 数据包链表。 /* xqc_packet_out_t buff 1RTT before handshake complete */
+    xqc_list_head_t             sndq_pto_probe_packets;            // PTO 探针数据包链表 /* xqc_packet_out_t */
 
     uint64_t                    sndq_packets_in_unacked_list;       /* to estimate bytes in the lists except for unacked list */
     uint64_t                    sndq_packets_used;

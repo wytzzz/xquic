@@ -559,7 +559,8 @@ xqc_gen_ack_frame(xqc_connection_t *conn, xqc_packet_out_t *packet_out, xqc_usec
 
     xqc_list_head_t *pos, *next;
     xqc_pktno_range_node_t *range_node;
-
+    
+    //获取收到的包号范围记录recv_record,取第一个范围节点first_range。
     xqc_pktno_range_node_t *first_range = NULL;
     xqc_list_for_each_safe(pos, next, &recv_record->list_head) {
         first_range = xqc_list_entry(pos, xqc_pktno_range_node_t, list);
@@ -570,17 +571,22 @@ xqc_gen_ack_frame(xqc_connection_t *conn, xqc_packet_out_t *packet_out, xqc_usec
         xqc_log(conn->log, XQC_LOG_ERROR, "|recv_record empty|");
         return -XQC_ENULLPTR;
     }
-
+    
+    //计算largest acknowledged包号和ack延迟时间。
     ack_delay = (now - largest_pkt_recv_time);
+    //110
     lagest_recv = first_range->pktno_range.high;
+    //110 - 108
     first_ack_range = lagest_recv - first_range->pktno_range.low;
+    //108
     prev_low = first_range->pktno_range.low;
 
     xqc_log(conn->log, XQC_LOG_DEBUG, "|lagest_recv:%ui|ack_delay:%ui|first_ack_range:%ud|largest_pkt_recv_time:%ui|",
             lagest_recv, ack_delay, first_ack_range, largest_pkt_recv_time);
 
     ack_delay = ack_delay >> ack_delay_exponent;
-
+    
+    //计算编码largest ack、ack延迟、第一个ack范围分别需要的字节数。
     unsigned lagest_recv_bits = xqc_vint_get_2bit(lagest_recv);
     unsigned ack_delay_bits = xqc_vint_get_2bit(ack_delay);
     unsigned first_ack_range_bits = xqc_vint_get_2bit(first_ack_range);
@@ -610,7 +616,8 @@ xqc_gen_ack_frame(xqc_connection_t *conn, xqc_packet_out_t *packet_out, xqc_usec
 
     xqc_vint_write(dst_buf, first_ack_range, first_ack_range_bits, xqc_vint_len(first_ack_range_bits));
     dst_buf += xqc_vint_len(first_ack_range_bits);
-
+    
+    //遍历收到的包号范围
     int is_first = 1;
     xqc_list_for_each_safe(pos, next, &recv_record->list_head) {    /* from second node */
         range_node = xqc_list_entry(pos, xqc_pktno_range_node_t, list);
@@ -621,8 +628,11 @@ xqc_gen_ack_frame(xqc_connection_t *conn, xqc_packet_out_t *packet_out, xqc_usec
             is_first = 0;
             continue;
         }
-
+        
+        //计算gap和ack range需要的字节数。
+        //108 - 106 -2 = 0
         gap = prev_low - range_node->pktno_range.high - 2;
+        //106 - 105 = 1 
         acks = range_node->pktno_range.high - range_node->pktno_range.low;
 
         gap_bits = xqc_vint_get_2bit(gap);
@@ -632,7 +642,8 @@ xqc_gen_ack_frame(xqc_connection_t *conn, xqc_packet_out_t *packet_out, xqc_usec
         if (dst_buf + need > end) {
             return -XQC_ENOBUF;
         }
-
+        
+        //写入gap和ack range。
         xqc_vint_write(dst_buf, gap, gap_bits, xqc_vint_len(gap_bits));
         dst_buf += xqc_vint_len(gap_bits);
 
@@ -640,13 +651,15 @@ xqc_gen_ack_frame(xqc_connection_t *conn, xqc_packet_out_t *packet_out, xqc_usec
         dst_buf += xqc_vint_len(acks_bits);
 
         prev_low = range_node->pktno_range.low;
-
+        
+        //统计range数量,写入range count字段。
         ++range_count;
         if (range_count >= XQC_MAX_ACK_RANGE_CNT - 1) {
             break;
         }
     }
-
+    
+    //根据是否只有一个range,设置has_gap标志。
     if (range_count > 0) {
         *has_gap = 1;
 
@@ -684,13 +697,15 @@ xqc_parse_ack_frame(xqc_packet_in_t *packet_in, xqc_connection_t *conn, xqc_ack_
      */
     ack_info->dcid_seq_num = 0;
     ack_info->pns = packet_in->pi_pkt.pkt_pns;
-
+    
+    //读取largest acked包号
     vlen = xqc_vint_read(p, end, &largest_acked);
     if (vlen < 0) {
         return -XQC_EVINTREAD;
     }
     p += vlen;
-
+    
+    //读取ack延迟,并根据remote设置的exponent转换时间
     vlen = xqc_vint_read(p, end, &ack_info->ack_delay);
     if (vlen < 0) {
         return -XQC_EVINTREAD;
@@ -698,38 +713,48 @@ xqc_parse_ack_frame(xqc_packet_in_t *packet_in, xqc_connection_t *conn, xqc_ack_
     p += vlen;
 
     ack_info->ack_delay = ack_info->ack_delay << conn->remote_settings.ack_delay_exponent;
-
+    
+    //读取ack range数量
     vlen = xqc_vint_read(p, end, &ack_range_count);
     if (vlen < 0) {
         return -XQC_EVINTREAD;
     }
     p += vlen;
-
+    
+    //读取第一个ack range。
     vlen = xqc_vint_read(p, end, &first_ack_range);
     if (vlen < 0) {
         return -XQC_EVINTREAD;
     }
     p += vlen;
-
+    
+    //根据第一个range计算出范围的高低端,保存到ack信息中
+    //110 - 2 = 108
     ack_info->ranges[n_ranges].high = largest_acked;
     ack_info->ranges[n_ranges].low = largest_acked - first_ack_range;
     n_ranges++;
-
+    
+    //循环读取每个gap和range:
     for (int i = 0; i < ack_range_count; ++i) {
+        //读取gap,表示丢失的包号区间。
         vlen = xqc_vint_read(p, end, &gap);
         if (vlen < 0) {
             return -XQC_EVINTREAD;
         }
         p += vlen;
-
+        
+        //读取range,表示实际收到的连续包号区间
         vlen = xqc_vint_read(p, end, &range);
         if (vlen < 0) {
             return -XQC_EVINTREAD;
         }
         p += vlen;
-
+        
+        //根据前一个范围和当前gap计算出当前范围的高低端
         if (n_ranges < XQC_MAX_ACK_RANGE_CNT) {
+            //108 - 0 - 2 = 106
             ack_info->ranges[n_ranges].high = ack_info->ranges[n_ranges - 1].low - gap - 2;
+            //106 - 1 = 105
             ack_info->ranges[n_ranges].low = ack_info->ranges[n_ranges].high - range;
             n_ranges++;
         }
@@ -746,6 +771,7 @@ xqc_parse_ack_frame(xqc_packet_in_t *packet_in, xqc_connection_t *conn, xqc_ack_
 
     ack_info->n_ranges = n_ranges;
     packet_in->pos = p;
+    //设置ACK frame已解析标志
     packet_in->pi_frame_types |= XQC_FRAME_BIT_ACK;
 
     xqc_log_event(conn->log, TRA_FRAMES_PROCESSED, XQC_FRAME_ACK, ack_info);

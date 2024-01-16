@@ -161,6 +161,7 @@ xqc_packet_out_copy(xqc_packet_out_t *dst, xqc_packet_out_t *src)
     if (src->po_padding) {
         dst->po_padding = dst->po_buf + (src->po_padding - src->po_buf);
     }
+    //这里维护了ref_packet和origin_packet的关系
     dst->po_origin = origin;
     origin->po_origin_ref_cnt++;
     dst->po_user_data = src->po_user_data;
@@ -383,11 +384,14 @@ xqc_write_ack_to_one_packet(xqc_connection_t *conn, xqc_packet_out_t *packet_out
     ssize_t ret;
     int has_gap;
     xqc_packet_number_t largest_ack;
+    //计算当前时间戳now。
     xqc_usec_t now = xqc_monotonic_timestamp();
-
+    
+    //获取连接的初始路径context和包号控制信息pn_ctl
     xqc_path_ctx_t *path = conn->conn_initial_path;
     xqc_pn_ctl_t *pn_ctl = xqc_get_pn_ctl(conn, path);
-
+    
+    //调用xqc_gen_ack_frame生成ACK frame,传入必要参数。
     ret = xqc_gen_ack_frame(conn, packet_out, now, conn->local_settings.ack_delay_exponent,
                             &pn_ctl->ctl_recv_record[pns], path->path_send_ctl->ctl_largest_recv_time[pns],
                             &has_gap, &largest_ack);
@@ -397,15 +401,20 @@ xqc_write_ack_to_one_packet(xqc_connection_t *conn, xqc_packet_out_t *packet_out
 
     xqc_log(conn->log, XQC_LOG_DEBUG, "|ack_size:%ui|path:%ui|path_largest_recv:%ui|frame_largest_recv:%ui|", 
                 ret, path->path_id, path->path_send_ctl->ctl_largest_received[pns], xqc_recv_record_largest(&pn_ctl->ctl_recv_record[pns]));
-
+    
+    //否则计算写入的ACK frame长度,更新packet_out的已使用长度。
     packet_out->po_ack_offset = packet_out->po_used_size;
     packet_out->po_used_size += ret;
+    //保存ACK中确认的最大包号到packet_out。
     packet_out->po_largest_ack = largest_ack;
-
+    
+    //指定包的发送路径被ack限定.
     packet_out->po_path_flag |= XQC_PATH_SPECIFIED_BY_ACK;
     packet_out->po_path_id = path->path_id;
-
+    
+    //清除初始路径的ACK标志和ACK触发计数
     path->path_send_ctl->ctl_ack_eliciting_pkt[pns] = 0;
+    //根据ACK中是否有GAP,设置connection的has_gap标志。
     if (has_gap) {
         conn->conn_flag |= XQC_CONN_FLAG_ACK_HAS_GAP;
 

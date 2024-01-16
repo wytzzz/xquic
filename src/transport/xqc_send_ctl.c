@@ -70,6 +70,8 @@ xqc_send_ctl_on_dgram_dropped(xqc_connection_t *conn, xqc_packet_out_t *po)
     }
 }
 
+
+//主要是在遍历发送队列时,需要过滤那些实际已ACK或者已丢弃但还在队列中的数据包,避免对这些数据包做无效的处理。
 int
 xqc_send_ctl_indirectly_ack_or_drop_po(xqc_connection_t *conn, xqc_packet_out_t *packet_out)
 {
@@ -80,7 +82,9 @@ xqc_send_ctl_indirectly_ack_or_drop_po(xqc_connection_t *conn, xqc_packet_out_t 
 
     xqc_send_ctl_t *send_ctl = path->path_send_ctl;
     xqc_send_queue_t *send_queue = conn->conn_send_queue;
-
+    
+    
+    //如果数据包或其原包已经被ACK,则执行已确认的回调处理,并从发送队列中移除。
     if (packet_out->po_acked
         || (packet_out->po_origin && packet_out->po_origin->po_acked))
     {
@@ -91,7 +95,8 @@ xqc_send_ctl_indirectly_ack_or_drop_po(xqc_connection_t *conn, xqc_packet_out_t 
         xqc_send_queue_maybe_remove_unacked(packet_out, send_queue, path);
         return XQC_TRUE;
     }
-
+    
+    //如果是DATAGRAM数据包,且被标记为已丢弃,则执行丢弃的回调处理,并从发送队列中移除。
     if (packet_out->po_frame_types & XQC_FRAME_BIT_DATAGRAM) {
         if ((packet_out->po_flag & XQC_POF_DROPPED_DGRAM)
             || (packet_out->po_origin && (packet_out->po_origin->po_flag & XQC_POF_DROPPED_DGRAM)))
@@ -484,29 +489,37 @@ xqc_send_packet_check_cc(xqc_send_ctl_t *send_ctl,
 }
 
 
+//ack与send_queue的联动
+//确认一个数据包后,需要将其从发送队列或路径缓冲区中移除,并处理相关的原包引用计数等问题,防止重复移除或错误释放,保证发送队列的正确性。
 void
 xqc_send_queue_maybe_remove_unacked(xqc_packet_out_t *packet_out, xqc_send_queue_t *send_queue, xqc_path_ctx_t *path)
 {
     /* it is origin & some pkt ref to this packet */
+    //如果当前packet是一个根包,并且被别的包所引用,暂时不能删除这个包.
     if (packet_out->po_origin == NULL && packet_out->po_origin_ref_cnt != 0) {
         return;
     }
-
+    
+    //如果包在路径缓冲区内,从路径缓冲区移除
     if (path && (packet_out->po_flag & XQC_POF_IN_PATH_BUF_LIST)) {
         xqc_path_send_buffer_remove(path, packet_out);
-
+    
+    //否则从发送队列中移除。
     } else {
         xqc_send_queue_remove_unacked(packet_out, send_queue);
     }
-
+    
+    //如果有原包,减少原包的引用计数。
     if (packet_out->po_origin
         && (--packet_out->po_origin->po_origin_ref_cnt) == 0)
     {
+        //如果原包引用计数为0,则减少原包的在途数据,并从发送队列中移除原包。
         /* po_origin could be an inflight one, thus requiring decrease inflight. */
         xqc_send_ctl_decrease_inflight(send_queue->sndq_conn, packet_out->po_origin);
         xqc_send_queue_remove_unacked(packet_out->po_origin, send_queue); /* TODO: ensure reinject packet will in path buf (not support yet) */
         xqc_send_queue_insert_free(packet_out->po_origin, &send_queue->sndq_free_packets, send_queue);
     }
+    
 
     xqc_send_queue_insert_free(packet_out, &send_queue->sndq_free_packets, send_queue);
 }
@@ -613,9 +626,11 @@ void
 xqc_send_ctl_on_packet_sent(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc_packet_out_t *packet_out, xqc_usec_t now)
 {
     xqc_pkt_num_space_t pns = packet_out->po_pkt.pkt_pns;
-
+    
+    //调用xqc_sample_on_sent()进行抽样统计。
     xqc_sample_on_sent(packet_out, send_ctl, now);
-
+    
+    //打印调试日志,包括连接状态、包类型、帧类型等关键信息
     xqc_packet_number_t orig_pktnum = packet_out->po_origin ? packet_out->po_origin->po_pkt.pkt_num : 0;
     xqc_log(send_ctl->ctl_conn->log, XQC_LOG_DEBUG,
             "|conn:%p|path:%ui|pkt_num:%ui|origin_pktnum:%ui|size:%ud|enc_size:%ud|pkt_type:%s|frame:%s|conn_state:%s|po_in_flight:%d|",
@@ -641,30 +656,44 @@ xqc_send_ctl_on_packet_sent(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc_
             xqc_conn_state_2_str(send_ctl->ctl_conn->conn_state), 
             packet_out->po_flag & XQC_POF_IN_FLIGHT ? 1: 0);
     }
-
+    
+    //更新此数据空间下的最大已发送包号
     if (packet_out->po_pkt.pkt_num > pn_ctl->ctl_largest_sent[pns]) {
         pn_ctl->ctl_largest_sent[pns] = packet_out->po_pkt.pkt_num;
     }
-
+    
+    //统计已发送字节数。
     send_ctl->ctl_bytes_send += packet_out->po_enc_size;
-
+    
+    //如果有ACK帧,记录ACK信息
     if (packet_out->po_largest_ack > 0) {
         xqc_ack_sent_record_add(&pn_ctl->ack_sent_record[pns], packet_out, send_ctl->ctl_srtt, now);
     }
-
+    
+    //如果需要纳入到在途数据中
     if (XQC_CAN_IN_FLIGHT(packet_out->po_frame_types)) {
-
+        
+        //如果是ack触发包
         if (XQC_IS_ACK_ELICITING(packet_out->po_frame_types)) {
+            //更新ack出发包的统计信息
             send_ctl->ctl_time_of_last_sent_ack_eliciting_packet[pns] =
             packet_out->po_sent_time;
             send_ctl->ctl_last_sent_ack_eliciting_packet_number[pns] =
             packet_out->po_pkt.pkt_num;
         }
+        // 更新流的统计信息
         xqc_conn_update_stream_stats_on_sent(send_ctl->ctl_conn, packet_out, now);
 
         xqc_log(send_ctl->ctl_conn->log, XQC_LOG_DEBUG,
                 "|path:%ui|inflight:%ud|applimit:%ui|",
                 send_ctl->ctl_path->path_id, send_ctl->ctl_bytes_in_flight, send_ctl->ctl_app_limited);
+        
+        //如果在途数据为0,调用拥塞控制的重启逻辑。
+        //app limit中恢复
+        //如果是BBR,则获取BBR的模式和空闲重启标志
+        //调用BBR的空闲重启函数
+        //途字节数为0时,如果启用了BBR,会执行BBR特有的空闲重启逻辑;其他拥塞控制则直接重启。
+        //这是由于BBR有显式的空闲重启处理,而其他拥塞控制如NewReno没有。
         if (send_ctl->ctl_bytes_in_flight == 0) {
             if (send_ctl->ctl_cong_callback->xqc_cong_ctl_init_bbr
                 && send_ctl->ctl_app_limited > 0)
@@ -682,7 +711,8 @@ xqc_send_ctl_on_packet_sent(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc_
                         xqc_cong_ctl_get_bandwidth_estimate(send_ctl->ctl_cong),
                         send_ctl->ctl_cong_callback->
                         xqc_cong_ctl_get_pacing_rate(send_ctl->ctl_cong));
-
+                
+                //cc从空闲中恢复的回调函数
                 send_ctl->ctl_cong_callback->xqc_cong_ctl_restart_from_idle(send_ctl->ctl_cong, send_ctl->ctl_delivered);
                 xqc_log_event(send_ctl->ctl_conn->log, REC_CONGESTION_STATE_UPDATED, "restart");
 
@@ -704,11 +734,13 @@ xqc_send_ctl_on_packet_sent(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc_
             xqc_send_ctl_increase_inflight(send_ctl->ctl_conn, packet_out);
             xqc_conn_increase_unacked_stream_ref(send_ctl->ctl_conn, packet_out);
         }
-
+        
+        //记录包丢失信息
         if (XQC_IS_ACK_ELICITING(packet_out->po_frame_types)) {
             xqc_send_ctl_set_loss_detection_timer(send_ctl);
         }
-
+        
+        //如果为loss包,则记录lost信息.
         if (packet_out->po_flag & XQC_POF_LOST) {
             ++send_ctl->ctl_lost_count;
             send_ctl->ctl_recent_lost_count[0]++;
@@ -716,6 +748,7 @@ xqc_send_ctl_on_packet_sent(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc_
 
         }
         
+        //如果是tlp包,则记录tlp信息
         if (packet_out->po_flag & XQC_POF_TLP) {
             ++send_ctl->ctl_tlp_count;
             send_ctl->ctl_recent_lost_count[0]++;
@@ -746,7 +779,8 @@ xqc_send_ctl_on_packet_sent(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc_
                 send_ctl->ctl_conn->dgram_stats.timer_red_dgram++;
             }
         }
-
+        
+        //更新发送计数
         ++send_ctl->ctl_send_count;
         send_ctl->ctl_recent_send_count[0]++;
         xqc_stream_path_metrics_on_send(send_ctl->ctl_conn, packet_out);
@@ -754,19 +788,23 @@ xqc_send_ctl_on_packet_sent(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc_
         send_ctl->ctl_last_inflight_pkt_sent_time = now;
         xqc_send_ctl_update_cwnd_limited(send_ctl);
     }
-    //发送conn_close
+
+    //如果包含closing frame
     if (packet_out->po_frame_types & XQC_FRAME_BIT_CONNECTION_CLOSE) {
+        //记录发送时间
         if (send_ctl->ctl_conn->conn_close_send_time == 0) {
             send_ctl->ctl_conn->conn_close_send_time = now;
         }
     }
-
+    
+    //更新连接的最后发送时间
     send_ctl->ctl_conn->conn_last_send_time = now;
 
     if (!send_ctl->ctl_recent_stats_timestamp) {
         send_ctl->ctl_recent_stats_timestamp = now;
     }
-
+    
+    //更新最近5RTT的统计信息
     if (now >= send_ctl->ctl_recent_stats_timestamp + (5 * send_ctl->ctl_srtt)) {
         send_ctl->ctl_recent_stats_timestamp = now;
         send_ctl->ctl_recent_lost_count[1] = send_ctl->ctl_recent_lost_count[0];
@@ -778,6 +816,9 @@ xqc_send_ctl_on_packet_sent(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc_
 
 /**
  * OnAckReceived
+ * 
+ *  110 109 108 107 106 105 104 103 102 101 100   //pkt num
+    1   1   1   0   1   1   0   0   1   1   1     //1 means received
  */
 int
 xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc_send_queue_t *send_queue, xqc_ack_info_t *const ack_info, xqc_usec_t ack_recv_time, xqc_bool_t ack_on_same_path)
@@ -789,6 +830,7 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
 
     xqc_packet_out_t *packet_out;
     xqc_list_head_t *pos, *next;
+    //最后一个range
     xqc_pktno_range_t *range = &ack_info->ranges[ack_info->n_ranges - 1];
     xqc_pkt_num_space_t pns = ack_info->pns;
 
@@ -809,7 +851,8 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
 
     /* 记录ack info里这条路径发出的最大pn的包 */
     xqc_packet_number_t path_largest_pkt_num = 0;
-
+    
+    //重置sampler,每个ack都会计算一次sampler,即一次带宽采样
     xqc_init_sample_before_ack(&send_ctl->sampler);
 
     /* detect and remove acked packets */
@@ -833,14 +876,19 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
         }
 
         // range从后数，ack range递增
+        //从最后一个ranga往前,即包号从小到大
+        //找到102所处于的range
         while (packet_out->po_pkt.pkt_num > range->high && range != ack_info->ranges) {
             --range;
         }
-
+        
+        //检查ACK的packet number范围是否确认了该数据包
+        //100 > 100
         if (packet_out->po_pkt.pkt_num >= range->low) {
             // this packet is acked
 
             // 修改标志位
+            //处理ack中的第一个应答时,,初始化一些标志位和计数器。
             if (has_acked == 0) {
                 /* 初始化 */
                 send_ctl->ctl_prior_delivered = send_ctl->ctl_delivered;
@@ -848,10 +896,12 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
 
                 has_acked = 1;
             }
-
+            
+            
+            //更新路径最大确认包号path_largest_pkt_num
             path_largest_pkt_num = packet_out->po_pkt.pkt_num;
 
-            // 更新ctl_largest_acked
+            //如果大于已确认最大值,更新路径确认最大包号ctl_largest_acked。
             // 若ack info里此路径最大pn大于path largest acked，更新 largest acked
             if (packet_out->po_pkt.pkt_num > send_ctl->ctl_largest_acked[pns] ||
                 send_ctl->ctl_largest_acked[pns] == XQC_MAX_UINT64_VALUE)
@@ -877,10 +927,14 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
                 xqc_conn_state_2_str(conn->conn_state),
                 frame_largest_ack, send_ctl->ctl_largest_acked[pns]);
 
-            // 更新sample
+     
+            //调用xqc_update_sample()更新发送抽样信息。
             xqc_update_sample(&send_ctl->sampler, packet_out, send_ctl, ack_recv_time);
 
             /* Packet previously declared lost gets acked */
+            //如果当前packet未ack,但是已经重传,则认为这个包是虚假重传了.
+            //因为我们之前把这个packet理解为loss了,并已经重传了
+            //但是实际上这个包并没有丢包,只是乱序了.
             if (!packet_out->po_acked && (packet_out->po_flag & XQC_POF_RETRANSED)) {
                 ++send_ctl->ctl_spurious_loss_count;
                 if (!spurious_loss_detected) {
@@ -889,29 +943,34 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
                     spurious_loss_sent_time = packet_out->po_sent_time;
                 }
             }
-
+        
             if (packet_out->po_frame_types & XQC_FRAME_BIT_DATAGRAM) {
                 xqc_datagram_notify_ack(conn, packet_out);
             }
-
+            
+            //send_ctl处理单个packet的ack逻辑
             xqc_send_ctl_on_packet_acked(send_ctl, packet_out, ack_recv_time, 1);
-
+            
+            //send_queue中移除已确认但未ACK的数据包。
             xqc_send_queue_maybe_remove_unacked(packet_out, send_queue, NULL);
 
             xqc_log(conn->log, XQC_LOG_DEBUG, "|sndq_packets_used:%ud||sndq_packets_used_bytes:%ud|sndq_packets_free:%ud|",
                     send_queue->sndq_packets_used, send_queue->sndq_packets_used_bytes, send_queue->sndq_packets_free);
-
+            
+            //检查是否有引起ACK的帧。
             if (XQC_IS_ACK_ELICITING(packet_out->po_frame_types)) {
                 has_ack_eliciting = 1;
             }
         }
     }
-
+    
+    //在这里已经处理完akc的应答了/
     /* 此path没有ack */
     if (!has_acked) {
         return XQC_OK;
     }
-
+        
+    //更新rtt
     if (update_largest_ack && has_ack_eliciting && ack_on_same_path) {
         /* 更新 ctl_latest_rtt */
         send_ctl->ctl_latest_rtt = ack_recv_time - send_ctl->ctl_largest_acked_sent_time[pns];
@@ -922,15 +981,18 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
     /* TODO: ECN */
 
     /* spurious loss */
+    //检测到虚假重传,需要更新判断丢包的乱序包号和乱序时长条件.
     if (spurious_loss_detected) {
         xqc_send_ctl_on_spurious_loss_detected(send_ctl, pns, ack_recv_time, path_largest_pkt_num,
                                                spurious_loss_pktnum, spurious_loss_sent_time);
     }
 
     /* DetectAndRemoveLostPackets + OnPacketsLost */
+    //调用检测丢包函数
     xqc_send_ctl_detect_lost(send_ctl, send_queue, pns, ack_recv_time);
 
     // 更新recv record
+    //根据ACK包号删除收到的包号记录
     if (need_del_record) {
         xqc_recv_record_del(&pn_ctl->ctl_recv_record[pns], pn_ctl->ctl_largest_acked_ack[pns] + 1);
         xqc_log(conn->log, XQC_LOG_DEBUG, "|xqc_recv_record_del from %ui|pns:%d|",
@@ -946,12 +1008,14 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
     if (xqc_conn_peer_complete_address_validation(conn)) {
         send_ctl->ctl_pto_count = 0;
     }
-
+    
+    //设置下次丢包检测定时器。
     xqc_log(conn->log, XQC_LOG_DEBUG, "|xqc_send_ctl_set_loss_detection_timer|acked|pto_count:%ud|", send_ctl->ctl_pto_count);
     xqc_send_ctl_set_loss_detection_timer(send_ctl);
 
     /* Clear app-limited field if the bubble is gone. */
     /* @NOTE: we need to clear it for Cubic/Reno as well. */
+    //如果发送端之前有流限制,检查是否可以解除限制
     if (send_ctl->ctl_app_limited 
         && send_ctl->ctl_delivered > send_ctl->ctl_app_limited)
     {
@@ -959,11 +1023,13 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
     }
 
     /* BBR */
+    //对BBR拥塞控制专门的处理
     if (send_ctl->ctl_cong_callback->xqc_cong_ctl_init_bbr /* && stream_frame_acked */) {
 
         uint64_t bw_before = 0, bw_after = 0;
         int bw_record_flag = 0;
         xqc_usec_t now = ack_recv_time;
+        //生成sample
         xqc_sample_type_t sample_type = xqc_generate_sample(&send_ctl->sampler, send_ctl, ack_recv_time);
 
         /* Make sure that we do not call BBR with a invalid sampler. */
@@ -980,7 +1046,8 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
 
             send_ctl->ctl_cong_callback->xqc_cong_ctl_on_ack_multiple_pkts(send_ctl->ctl_cong, &send_ctl->sampler);
         }
-
+        
+        //打印BBR的调试状态信息。
         if (send_ctl->ctl_conn->log->log_level >= XQC_LOG_DEBUG) {
             uint8_t mode, full_bw_reached;
             uint8_t recovery_mode, round_start;
@@ -1014,7 +1081,8 @@ xqc_send_ctl_on_ack_received(xqc_send_ctl_t *send_ctl, xqc_pn_ctl_t *pn_ctl, xqc
                  (unsigned int) recovery_mode, recovery_start_time, (unsigned int) idle_restart,
                  (unsigned int) packet_conservation, (unsigned int) round_start);
         }
-
+        
+        //检查带宽变化并记录。
         if (bw_record_flag) {
             bw_after = send_ctl->ctl_cong_callback->xqc_cong_ctl_get_bandwidth_estimate(send_ctl->ctl_cong);
             if (bw_after > 0) {
@@ -1151,30 +1219,41 @@ xqc_send_ctl_on_spurious_loss_detected(xqc_send_ctl_t *send_ctl,
     xqc_packet_number_t spurious_loss_pktnum,
     xqc_usec_t spurious_loss_sent_time)
 {
+    //检查是否开启了伪重传检测功能,如果没开启则直接返回。
     if (!send_ctl->ctl_conn->conn_settings.spurious_loss_detect_on) {
         return;
     }
 
     /* Adjust Packet Threshold */
+    //检查最大已确认包号是否大于伪重传的包号,如果不大于则直接返回
+    // 100 108, 100号包是伪重传包 100号包是90的重传包
+    //但是100ack的时候,90已经被ack.
     if (largest_ack < spurious_loss_pktnum) {
         return;
     }
+    
+    //计算包号间隙,取最大值加1作为新的包重传阈值。
+    //largest_ack - spurious_loss_pktnum
     send_ctl->ctl_reordering_packet_threshold = xqc_max(send_ctl->ctl_reordering_packet_threshold,
                                                         xqc_send_ctl_get_pkt_num_gap(send_ctl, pns, spurious_loss_pktnum, largest_ack) + 1);
 
 
     /* Adjust Time Threshold */
+    //检查ACK接收时间是否早于伪重传包的发送时间,如果不早则直接返回
     if (ack_recv_time < spurious_loss_sent_time) {
         return;
     }
+    //计算包间的重传时间间隔。
     xqc_usec_t reorder_time_interval = ack_recv_time - spurious_loss_sent_time;
     xqc_usec_t max_rtt = xqc_max(send_ctl->ctl_latest_rtt, send_ctl->ctl_srtt);
+    //环调整时间重传阈值的位移值,直到阈值大于时间间隔。
     while (max_rtt + (max_rtt >> send_ctl->ctl_reordering_time_threshold_shift) < reorder_time_interval
            && send_ctl->ctl_reordering_time_threshold_shift > 0)
     {
         --send_ctl->ctl_reordering_time_threshold_shift;
     }
-
+    
+    //打印调整后的包阈值和时间阈值
     xqc_log(send_ctl->ctl_conn->log, XQC_LOG_DEBUG, "|ctl_reordering_packet_threshold:%ui|ctl_reordering_time_threshold_shift:%d|",
             send_ctl->ctl_reordering_packet_threshold, send_ctl->ctl_reordering_time_threshold_shift);
 }
@@ -1200,6 +1279,7 @@ xqc_send_ctl_detect_lost(xqc_send_ctl_t *send_ctl, xqc_send_queue_t *send_queue,
     }
 
     /* loss_delay = 9/8 * max(latest_rtt, smoothed_rtt) */
+    //计算丢包时长与之
     xqc_usec_t loss_delay = xqc_max(send_ctl->ctl_latest_rtt, send_ctl->ctl_srtt);
     loss_delay += loss_delay >> send_ctl->ctl_reordering_time_threshold_shift;
 
@@ -1207,6 +1287,7 @@ xqc_send_ctl_detect_lost(xqc_send_ctl_t *send_ctl, xqc_send_queue_t *send_queue,
     loss_delay = xqc_max(loss_delay, XQC_kGranularity * 1000);
 
     /* Packets sent before this time are deemed lost. */
+    //发送时间在lost_send_time之前的unack包认为丢包的。
     xqc_usec_t lost_send_time = now - loss_delay;
 
     /* Packets with packet numbers before this are deemed lost. */
@@ -1216,12 +1297,13 @@ xqc_send_ctl_detect_lost(xqc_send_ctl_t *send_ctl, xqc_send_queue_t *send_queue,
     xqc_int_t repair_dgram = 0;
     xqc_reinjection_mode_t mode = conn->conn_settings.mp_enable_reinjection & XQC_REINJ_UNACK_BEFORE_SCHED;
     int has_reinjection = 0;
-
+    
+    //遍历发送队列中的未ACK包,检查每个包
     xqc_list_for_each_safe(pos, next, &send_queue->sndq_unacked_packets[pns]) {
         po = xqc_list_entry(pos, xqc_packet_out_t, po_list);
 
         repair_dgram = 0;
-
+        
         if (xqc_send_ctl_indirectly_ack_or_drop_po(conn, po)) {
             continue;
         }
@@ -1236,12 +1318,15 @@ xqc_send_ctl_detect_lost(xqc_send_ctl_t *send_ctl, xqc_send_queue_t *send_queue,
         }
 
         /* Mark packet as lost, or set time when it should be marked. */
+        //如果发送时间或包号小于阈值,则判定为丢包。
         if (po->po_sent_time <= lost_send_time
 			|| (lost_pn != XQC_MAX_UINT64_VALUE && po->po_pkt.pkt_num <= lost_pn))
 		{
+            //处理丢包,包括重传、移出发送队列等。
             if (po->po_flag & XQC_POF_IN_FLIGHT) {
 
                 /* reinjection */
+                //如果开启多径，则重注入。
                 if (conn->enable_multipath
                     && conn->reinj_callback
                     && conn->reinj_callback->xqc_reinj_ctl_can_reinject
@@ -1257,8 +1342,9 @@ xqc_send_ctl_detect_lost(xqc_send_ctl_t *send_ctl, xqc_send_queue_t *send_queue,
                     }   
                 }
                 
+                //更新inflight
                 xqc_send_ctl_decrease_inflight(conn, po);
-
+                
                 if (po->po_frame_types & XQC_FRAME_BIT_DATAGRAM) {
                     send_ctl->ctl_lost_dgram_cnt++;
                     repair_dgram = xqc_datagram_notify_loss(conn, po);
@@ -1266,7 +1352,8 @@ xqc_send_ctl_detect_lost(xqc_send_ctl_t *send_ctl, xqc_send_queue_t *send_queue,
                         repair_dgram = XQC_DGRAM_RETX_ASKED_BY_APP;
                     }
                 }
-
+                
+                //判读是否需要重传,需要的话拷贝frame.
                 if (XQC_NEED_REPAIR(po->po_frame_types) 
                     || repair_dgram == XQC_DGRAM_RETX_ASKED_BY_APP) 
                 {
@@ -1300,6 +1387,7 @@ xqc_send_ctl_detect_lost(xqc_send_ctl_t *send_ctl, xqc_send_queue_t *send_queue,
             }
 
             /* remember largest_loss for OnPacketsLost */
+            //记录最大的丢包号
             if (largest_lost == NULL
                 || (po->po_pkt.pkt_num > largest_lost->po_pkt.pkt_num))
             {
@@ -1339,6 +1427,7 @@ xqc_send_ctl_detect_lost(xqc_send_ctl_t *send_ctl, xqc_send_queue_t *send_queue,
          * enter loss recovery here
          */
         xqc_log(conn->log, XQC_LOG_DEBUG, "|OnLostDetection|largest_lost sent time: %lu|", largest_lost->po_sent_time);
+        //如果存在新的丢包,则通知cc
         xqc_send_ctl_congestion_event(send_ctl, largest_lost->po_sent_time);
 
         if (send_ctl->ctl_first_rtt_sample_time == 0) {
@@ -1493,6 +1582,16 @@ xqc_send_ctl_on_pmtud_ping_acked(xqc_send_ctl_t *send_ctl,
 /**
  * OnPacketAcked
  */
+//处理一个packet的ack.
+//具体包括:
+//XQC_FRAME_BIT_HANDSHAKE_DONE
+//XQC_POF_IN_FLIGHT
+//XQC_FRAME_BIT_RESET_STREAM
+//XQC_FRAME_BIT_CRYPTO
+//XQC_FRAME_BIT_PING
+//XQC_FRAME_BIT_NEW_CONNECTION_ID
+//    packet_out->po_acked = 1;
+
 void
 xqc_send_ctl_on_packet_acked(xqc_send_ctl_t *send_ctl,
     xqc_packet_out_t *acked_packet, xqc_usec_t now, int do_cc)
@@ -1501,7 +1600,8 @@ xqc_send_ctl_on_packet_acked(xqc_send_ctl_t *send_ctl,
     xqc_packet_out_t *packet_out = acked_packet;
     xqc_connection_t *conn = send_ctl->ctl_conn;
     xqc_bool_t notify_ping;
-
+    
+    //如果ACK了HANDSHAKE_DONE帧,设置连接标志位
     if ((conn->conn_type == XQC_CONN_TYPE_SERVER) && (acked_packet->po_frame_types & XQC_FRAME_BIT_HANDSHAKE_DONE)) {
         conn->conn_flag |= XQC_CONN_FLAG_HANDSHAKE_DONE_ACKED;
     }
@@ -1510,16 +1610,20 @@ xqc_send_ctl_on_packet_acked(xqc_send_ctl_t *send_ctl,
 
     /* If a packet marked as STREAM_CLOSED, when it is acked, it comes here */
     if (packet_out->po_flag & XQC_POF_IN_FLIGHT) {
+        //减少在途字节统计。
         xqc_send_ctl_decrease_inflight(send_ctl->ctl_conn, packet_out);
-
+        
+        //如果有RESET_STREAM帧,执行已确认的特殊处理
         if (packet_out->po_frame_types & XQC_FRAME_BIT_RESET_STREAM) {
             xqc_send_ctl_on_reset_stream_acked(send_ctl, packet_out);
         }
-
+        
+        //如果有CRYPTO帧,设置握手ACK标志位
         if (packet_out->po_frame_types & XQC_FRAME_BIT_CRYPTO && packet_out->po_pkt.pkt_pns == XQC_PNS_HSK) {
             conn->conn_flag |= XQC_CONN_FLAG_HSK_ACKED;
         }
-
+        
+        //如果有PING帧,执行PING确认逻辑。
         if (packet_out->po_frame_types & XQC_FRAME_BIT_PING) {
             if (conn->app_proto_cbs.conn_cbs.conn_ping_acked
                 && (packet_out->po_flag & XQC_POF_NOTIFY))
@@ -1546,16 +1650,19 @@ xqc_send_ctl_on_packet_acked(xqc_send_ctl_t *send_ctl,
 
         /* TODO: fix NEW_CID_RECEIVED */
         //_NEW_CID frame被应答。
+        //如果有NEW_CONNECTION_ID帧,设置相关标志位。
         if (packet_out->po_frame_types & XQC_FRAME_BIT_NEW_CONNECTION_ID) {
             packet_out->po_frame_types &= ~XQC_FRAME_BIT_NEW_CONNECTION_ID;
             conn->conn_flag |= XQC_CONN_FLAG_NEW_CID_ACKED;
         }
-
+        
+        //如果需要,调用拥塞控制的ACK处理函
         if (do_cc) {
             xqc_send_ctl_cc_on_ack(send_ctl, packet_out, now);
         }
     }
-
+    
+    //设置这个packet已经处理完ack
     packet_out->po_acked = 1;
     if (packet_out->po_origin) {
         packet_out->po_origin->po_acked = 1;
@@ -1793,6 +1900,7 @@ xqc_send_ctl_get_lost_sent_pn(xqc_send_ctl_t *send_ctl, xqc_pkt_num_space_t pns)
     xqc_packet_number_t lost_pn = XQC_MAX_UINT64_VALUE;     /* pkt num从0开始 */
 
     /* Multiple pns & Single path */
+    //如果包号比 lost_pn更小，则认为丢包
     if (largest_acked >= threshold) {
         lost_pn = largest_acked - threshold;
     }

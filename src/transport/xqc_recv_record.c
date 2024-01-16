@@ -247,12 +247,14 @@ xqc_maybe_should_ack(xqc_connection_t *conn, xqc_path_ctx_t *path, xqc_pn_ctl_t 
     /*
      * Generating Acknowledgements
      */
-
+    
+    //检查path是否已经标记了需要发送ACK,如果是则直接返回
     if (path->path_flag & (XQC_PATH_FLAG_SHOULD_ACK_INIT << pns)) {
         xqc_log(conn->log, XQC_LOG_DEBUG, "|already yes|");
         return;
     }
-
+    
+    //对于handshake和1-RTT数据,需要等待密钥协商完成才能发送ACK。
     if (pns == XQC_PNS_HSK
         && (xqc_tls_is_key_ready(conn->tls, XQC_ENC_LEV_HSK, XQC_KEY_TYPE_TX_WRITE) == XQC_FALSE))
     {
@@ -265,11 +267,16 @@ xqc_maybe_should_ack(xqc_connection_t *conn, xqc_path_ctx_t *path, xqc_pn_ctl_t 
     }
 
     xqc_send_ctl_t *send_ctl = path->path_send_ctl;
-
+    
+    //检查是否满足ACK发送的条件:
+    //接收到ACK触发包数达到配置的ack频率
+    //握手包数>=1时立即触发
+    //收到乱序包时立即触发
     if (send_ctl->ctl_ack_eliciting_pkt[pns] >= conn->conn_settings.ack_frequency
         || (pns <= XQC_PNS_HSK && send_ctl->ctl_ack_eliciting_pkt[pns] >= 1)
         || (out_of_order && send_ctl->ctl_ack_eliciting_pkt[pns] >= 1))
     {
+        //如果满足条件,则标记path和connection需要发送ACK,并取消ACK定时器。
         path->path_flag |= XQC_PATH_FLAG_SHOULD_ACK_INIT << pns;
         conn->ack_flag |= (1 << (pns + path->path_id * XQC_PNS_N));
         
@@ -281,7 +288,8 @@ xqc_maybe_should_ack(xqc_connection_t *conn, xqc_path_ctx_t *path, xqc_pn_ctl_t 
                 send_ctl->ctl_ack_eliciting_pkt[pns],
                 pns, xqc_conn_flag_2_str(conn->conn_flag),
                 conn->conn_settings.ack_frequency);
-
+    
+    //如果收到过ACK触发包但未满足条件,则设置定时ACK定时器,在max_ack_delay后触发
     } else if (send_ctl->ctl_ack_eliciting_pkt[pns] > 0
                && !xqc_timer_is_set(&send_ctl->path_timer_manager, XQC_TIMER_ACK_INIT + pns))
     {
@@ -327,6 +335,7 @@ int
 xqc_ack_sent_record_add(xqc_ack_sent_record_t *record, xqc_packet_out_t *packet_out, xqc_usec_t srtt, xqc_usec_t now)
 {
     /* Record once per round trip */
+    //如果在一个rtt内,则不统计.
     if (record->last_add_time + srtt > now) {
         return XQC_OK;
     }
@@ -341,6 +350,7 @@ xqc_ack_sent_record_add(xqc_ack_sent_record_t *record, xqc_packet_out_t *packet_
     if (!entry) {
         return XQC_ERROR;
     }
+    
     entry->pkt_num = packet_out->po_pkt.pkt_num;
     entry->largest_ack = packet_out->po_largest_ack;
 

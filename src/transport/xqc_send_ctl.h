@@ -72,25 +72,31 @@ typedef struct xqc_send_ctl_s {
     xqc_path_ctx_t              *ctl_path;
 
     /* largest packet number of the acked packets in packet_out */
+    //每个packet number space下已确认的最大包号
     xqc_packet_number_t         ctl_largest_acked[XQC_PNS_N];
 
     /* sending time of largest packet */
+    //对应包号被发送的时间。
     xqc_usec_t                  ctl_largest_acked_sent_time[XQC_PNS_N];
 
     /* largest packet number of the received packets in packet_in */
+    //每个packet number space接收的最大包号。
     xqc_packet_number_t         ctl_largest_received[XQC_PNS_N];
     
     /* received time of largest packet */
+    // 对应包的接收时间
     xqc_usec_t                  ctl_largest_recv_time[XQC_PNS_N];
 
     /* Ack-eliciting Packets received since last ack sent */
+    //每个packet number space收到的ACK触发包数。
     uint32_t                    ctl_ack_eliciting_pkt[XQC_PNS_N];
-
+    
+    // 每个packet number space的丢包时间。
     xqc_usec_t                  ctl_loss_time[XQC_PNS_N];
 
-    xqc_usec_t                  ctl_last_inflight_pkt_sent_time;
-    xqc_usec_t                  ctl_time_of_last_sent_ack_eliciting_packet[XQC_PNS_N];
-    xqc_packet_number_t         ctl_last_sent_ack_eliciting_packet_number[XQC_PNS_N];
+    xqc_usec_t                  ctl_last_inflight_pkt_sent_time; //最后一个在途包的发送时间。
+    xqc_usec_t                  ctl_time_of_last_sent_ack_eliciting_packet[XQC_PNS_N]; //最后一个ACK触发包的发送时间。
+    xqc_packet_number_t         ctl_last_sent_ack_eliciting_packet_number[XQC_PNS_N];//对应的包号。
     xqc_usec_t                  ctl_srtt,
                                 ctl_rttvar,
                                 ctl_minrtt,
@@ -102,11 +108,11 @@ typedef struct xqc_send_ctl_s {
     xqc_msec_t                  ctl_latest_rtt_sum;
     xqc_msec_t                  ctl_latest_rtt_square_sum;
 
-    xqc_timer_manager_t         path_timer_manager;
+    xqc_timer_manager_t         path_timer_manager;  //定时器管理。
 
-    unsigned                    ctl_pto_count;
+    unsigned                    ctl_pto_count;  //PTO计数
 
-    unsigned                    ctl_send_count;
+    unsigned                    ctl_send_count;  //各类事件计数
     unsigned                    ctl_lost_count;
     unsigned                    ctl_tlp_count;
     unsigned                    ctl_spurious_loss_count;
@@ -120,22 +126,23 @@ typedef struct xqc_send_ctl_s {
     uint32_t                    ctl_reinj_dgram_send_count;
     uint32_t                    ctl_reinj_dgram_recv_count;
 
-    uint32_t                    ctl_max_bytes_in_flight;
+    uint32_t                    ctl_max_bytes_in_flight;  //在途字节统计
     uint8_t                     ctl_is_cwnd_limited;
 
-    unsigned                    ctl_bytes_in_flight;
+    unsigned                    ctl_bytes_in_flight;  
     uint32_t                    ctl_bytes_ack_eliciting_inflight[XQC_PNS_N];
     unsigned                    ctl_prior_bytes_in_flight;
 
-    uint64_t                    ctl_bytes_send;
+    uint64_t                    ctl_bytes_send; //发送/接收字节统计
     uint64_t                    ctl_bytes_recv;
 
     const
-    xqc_cong_ctrl_callback_t    *ctl_cong_callback;
+    xqc_cong_ctrl_callback_t    *ctl_cong_callback;  //: 拥塞控制回调和状态。
     void                        *ctl_cong;
 
     xqc_pacing_t                ctl_pacing;
-
+    
+    //数据交付相关统计。
     uint64_t                    ctl_prior_delivered;    /* the amount of data delivered in the last call of on_ack_received*/
     uint64_t                    ctl_delivered;          /* the amount of data that has been marked as sent at the current ack moment */
     uint64_t                    ctl_app_limited;        /* The index of the last transmitted packet marked as application-limited,

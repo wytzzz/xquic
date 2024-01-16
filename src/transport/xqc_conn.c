@@ -2353,10 +2353,12 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
     int                     has_reinjection = 0;
 
     c       = path->parent_conn;
+    //
     sndq    = &c->conn_send_queue->sndq_unacked_packets[pns];
 
     /* on PTO xquic will try to send 2 ack-eliciting pkts at most. and server
        shall send HANDSHAKE_DONE on PTO as it has not been acknowledged. */
+    //最多发送2个ACK触发数据包
     probe_num        = XQC_CONN_PTO_PKT_CNT_MAX;
     send_hsd         = XQC_FALSE;
     send_hsd_next    = XQC_FALSE;
@@ -2368,15 +2370,18 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
             "|path:%ui|pns:%d|", path->path_id, pns);
 
     /* if server's HANDSHAKE_DONE frame has not been acked, try to send it */
+    //如果server端的HANDSHAKE_DONE帧未确认,需要优先发送
     if ((c->conn_type == XQC_CONN_TYPE_SERVER)
         && !(c->conn_flag & XQC_CONN_FLAG_HANDSHAKE_DONE_ACKED))
     {
         send_hsd = XQC_TRUE;
     }
-
+    
+    //遍历发送队列的未ACK包 sndq_unacked_packets
     xqc_list_for_each_safe(pos, next, sndq) {
         packet_out = xqc_list_entry(pos, xqc_packet_out_t, po_list);
-
+        
+        。
         if (xqc_send_ctl_indirectly_ack_or_drop_po(c, packet_out)) {
             continue;
         }
@@ -2384,7 +2389,8 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
         if (!xqc_packet_out_can_pto_probe(packet_out, path->path_id)) {
             continue;
         }
-
+        
+        ////对ACK触发且需要重传的包调用发送探测包函数
         if (XQC_IS_ACK_ELICITING(packet_out->po_frame_types)
             && (XQC_NEED_REPAIR(packet_out->po_frame_types) 
                 || (packet_out->po_frame_types & XQC_FRAME_BIT_DATAGRAM
@@ -2393,6 +2399,7 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
             /* if HSK_DONE is not confirmed, will skip all the pkts do not
                contain HSK_DONE frame, until a pkt with HSK_DONE is found, make
                HSK_DONE is always with the highest priority */
+            //如果有HANDSHAKE_DONE优先级更高,记录其他ACK触发包,先不发送
             if (send_hsd
                 && !(packet_out->po_frame_types & XQC_FRAME_BIT_HANDSHAKE_DONE))
             {
@@ -2404,7 +2411,7 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
 
                 continue;
             }
-
+        
             has_reinjection = has_reinjection || xqc_conn_send_probe_pkt(c, path, packet_out);
             packet_out_last_sent = packet_out;
 
@@ -2414,6 +2421,7 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
 
             /* if a pkt with HSK_DONE is after any other ack-eliciting pkts is
                sent, try to send the first ack-eliciting pkt */
+            //如果某包包含HANDSHAKE_DONE帧,发送之前记录的其他ACK触发包
             if (send_hsd &&
                 (packet_out->po_frame_types & XQC_FRAME_BIT_HANDSHAKE_DONE))
             {
@@ -2433,7 +2441,8 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
             }
         }
     }
-
+    
+    //如果probe_num还有计数,重复发送最后一个包
     if (probe_num > 0) {
         if (packet_out_last_sent) {
             /* at least one pkt was sent, and there is still budget for send
@@ -2444,7 +2453,8 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
                 has_reinjection = has_reinjection || xqc_conn_send_probe_pkt(c, path, packet_out_last_sent);
                 probe_num--;
             }
-
+        
+        //如果没有发送任何包,则发送PING帧
         } else {
             /* if no packet was sent, try to send PING frame */
             while (probe_num > 0) {
@@ -2454,7 +2464,7 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
             }
         }
     }
-
+    
     if (has_reinjection) {
         xqc_path_ctx_t *path;
         xqc_list_for_each_safe(pos, next, &c->conn_paths_list) {
@@ -3774,7 +3784,8 @@ xqc_conn_record_single(xqc_connection_t *c, xqc_packet_in_t *packet_in)
     int out_of_order = 0;
     xqc_pkt_num_space_t pns = packet_in->pi_pkt.pkt_pns;
     xqc_packet_number_t pkt_num = packet_in->pi_pkt.pkt_num;
-
+    
+    //保存record
     range_status = xqc_recv_record_add(&pn_ctl->ctl_recv_record[pns], pkt_num);
     if (range_status == XQC_PKTRANGE_OK) {
         if (XQC_IS_ACK_ELICITING(packet_in->pi_frame_types)) {

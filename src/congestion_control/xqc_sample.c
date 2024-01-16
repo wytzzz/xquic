@@ -33,12 +33,16 @@ xqc_generate_sample(xqc_sample_t *sampler, xqc_send_ctl_t *send_ctl,
                 "|sampler_prior_time_is_zero!|");
         return XQC_RATE_SAMPLE_ACK_NOTHING;
     }
-
+    
+    //计算本次ACK新确认的数据量acked
     sampler->acked = send_ctl->ctl_delivered - send_ctl->ctl_prior_delivered;
     /* Use the longer of the send_elapsed and ack_elapsed */
+    //计算发送时间间隔send_elapsed和ACK时间间隔ack_elapsed的最大值作为本次抽样的时间间隔interval。
     sampler->interval = xqc_max(sampler->ack_elapse, sampler->send_elapse);
+    //计算本次ACK新确认的累积数据量delivered
     sampler->delivered = send_ctl->ctl_delivered - sampler->prior_delivered;
     /* This is for BBRv2 */
+    //计算丢包数lost_pkts
     sampler->lost_pkts = send_ctl->ctl_lost_pkts_number - sampler->prior_lost;
 
     /* 
@@ -60,10 +64,12 @@ xqc_generate_sample(xqc_sample_t *sampler, xqc_send_ctl_t *send_ctl,
      * measuring the delivery rate during loss recovery is crucial
      * for connections suffer heavy or prolonged losses.
      */
+    //检查间隔是否太短,如果短于最小RTT则返回,不生成有效抽样。
     if (sampler->interval < send_ctl->ctl_minrtt) {
         sampler->interval = 0;
         return XQC_RATE_SAMPLE_INTERVAL_TOO_SAMLL;
     }
+    //如果采样时间超过1个rtt,则记录一次采样.
     if (sampler->interval != 0) {
         /* unit of interval is us */
         sampler->delivery_rate = (uint64_t)(1e6 * sampler->delivered / sampler->interval);
@@ -88,18 +94,24 @@ xqc_update_sample(xqc_sample_t *sampler, xqc_packet_out_t *packet,
                 "|packet:%ui already acked|", packet->po_pkt.pkt_num);
         return; /* P already SACKed */
     }
-
+    
+    //更新已交付字节数delivered和时间delivered_time。
     send_ctl->ctl_delivered += packet->po_used_size;
     send_ctl->ctl_delivered_time = now;
 
     /* Update info using the newest packet: */
     /* if it's the ACKs from the first RTT round, we use the sample anyway */
-
+    
+    //如果是初始RTT样本或有packet在发送时有更大的po_delivered,则更新抽样信息:
+    //找到这批ack包如100，101，102等中，最后一次收到ack时候的状态最为起始状态。
     if ((sampler->prior_delivered == 0)
         || (packet->po_delivered > sampler->prior_delivered)) 
     {
+        //已丢包数prior_lost
         sampler->prior_lost = packet->po_lost;
+        //发送时在途字节数tx_in_flight
         sampler->tx_in_flight = packet->po_tx_in_flight;
+        //发送时已交付字节数prior_delivered和时间
         sampler->prior_delivered = packet->po_delivered;
         sampler->prior_time = packet->po_delivered_time;
         sampler->is_app_limited = packet->po_is_app_limited;
@@ -107,7 +119,9 @@ xqc_update_sample(xqc_sample_t *sampler, xqc_packet_out_t *packet,
                                packet->po_first_sent_time;
         sampler->ack_elapse = send_ctl->ctl_delivered_time - 
                               packet->po_delivered_time;
+        
         send_ctl->ctl_first_sent_time = packet->po_sent_time;
+        //最新ACK时间lagest_ack_time
         sampler->lagest_ack_time = now;
     }
     xqc_log(send_ctl->ctl_conn->log, XQC_LOG_DEBUG, "|sampler_update|"
@@ -135,9 +149,11 @@ xqc_update_sample(xqc_sample_t *sampler, xqc_packet_out_t *packet,
 xqc_bool_t
 xqc_sample_check_app_limited(xqc_sample_t *sampler, xqc_send_ctl_t *send_ctl, xqc_send_queue_t *send_queue)
 {
+    //获取当前拥塞窗口大小和MSS。
     uint32_t cwnd_bytes = send_ctl->ctl_cong_callback->
                           xqc_cong_ctl_get_cwnd(send_ctl->ctl_cong);
     uint32_t actual_mss = xqc_conn_get_mss(send_ctl->ctl_conn);
+    //计算是否拥塞窗口受限。
     xqc_bool_t not_cwnd_limited = send_ctl->ctl_bytes_in_flight + actual_mss <= 
                                   cwnd_bytes;
     /* @FIXME: We should find a better way to adapt it to multipath. 
@@ -146,7 +162,8 @@ xqc_sample_check_app_limited(xqc_sample_t *sampler, xqc_send_ctl_t *send_ctl, xq
      * if the path buffer is empty, there might be some "bubbles" in the pipe.
      * However, we have no better idea to handle this problem at this moment.
      */
-
+    
+    //检查所有路径的发送队列是否为空
     xqc_bool_t all_path_buffer_empty = XQC_TRUE;
     int i;
     for (i = XQC_SEND_TYPE_NORMAL; i < XQC_SEND_TYPE_N; i++) {
@@ -154,7 +171,7 @@ xqc_sample_check_app_limited(xqc_sample_t *sampler, xqc_send_ctl_t *send_ctl, xq
             all_path_buffer_empty = XQC_FALSE;
         }
     }
-
+    
     xqc_log(send_ctl->ctl_conn->log, XQC_LOG_DEBUG, 
             "|check_applimit|path:%ui|inflight:%ud|"
             "now_cwnd_limited:%d|all_path_empty:%d|"
@@ -164,13 +181,15 @@ xqc_sample_check_app_limited(xqc_sample_t *sampler, xqc_send_ctl_t *send_ctl, xq
             xqc_list_empty(&send_queue->sndq_send_packets),
             xqc_list_empty(&send_queue->sndq_lost_packets),
             xqc_list_empty(&send_queue->sndq_pto_probe_packets));
-
+    
+    //如果不受拥塞窗口限制,发送队列为空,且所有路径发送缓存为空,则进入应用受限
     if (not_cwnd_limited    /* We are not limited by CWND. */
         && xqc_list_empty(&send_queue->sndq_send_packets)  /* We have no packet to send. */
         && xqc_list_empty(&send_queue->sndq_lost_packets)  /* All lost packets have been retransmitted. */
         && xqc_list_empty(&send_queue->sndq_pto_probe_packets)
         && all_path_buffer_empty)
-    {
+    {   
+        //记录此时已发送的数据总量作为受限指标
         send_ctl->ctl_app_limited = (send_ctl->ctl_delivered + 
                                     send_ctl->ctl_bytes_in_flight) ?
                                     (send_ctl->ctl_delivered + 
@@ -192,14 +211,20 @@ void
 xqc_sample_on_sent(xqc_packet_out_t *packet_out, xqc_send_ctl_t *send_ctl, 
     xqc_usec_t now)
 {
+    //如果当前在途字节数为0,则记录本次发送的时间作为delivered_time和first_sent_time。
     if (send_ctl->ctl_bytes_in_flight == 0) {
         send_ctl->ctl_delivered_time = send_ctl->ctl_first_sent_time = now;
     }
+    //将send_ctl的delivered_time和first_sent_time赋值给数据包packet_out。
     packet_out->po_delivered_time = send_ctl->ctl_delivered_time;
     packet_out->po_first_sent_time = send_ctl->ctl_first_sent_time;
+    //将send_ctl的已交付字节数delivered赋值给数据包packet_out。
     packet_out->po_delivered = send_ctl->ctl_delivered;
+    //根据是否有流受限标志,设置packet_out的is_app_limited。
     packet_out->po_is_app_limited = send_ctl->ctl_app_limited > 0 ? XQC_TRUE : XQC_FALSE;
+    //将send_ctl的丢包数lost赋值给数据包packet_out。
     packet_out->po_lost = send_ctl->ctl_lost_pkts_number;
+    //计算发送时的在途字节数in_flight,包括已有的在途字节数加上本次数据包大小,赋值给packet_out。
     packet_out->po_tx_in_flight = send_ctl->ctl_bytes_in_flight + 
                                   packet_out->po_used_size;
 }
