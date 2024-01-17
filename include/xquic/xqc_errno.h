@@ -43,6 +43,25 @@ typedef enum {
 /*
  *  QUIC Http/3 Protocol error codes
  */
+
+/**
+H3_NO_ERROR: 没有错误。
+H3_GENERAL_PROTOCOL_ERROR: 一般协议错误。
+H3_INTERNAL_ERROR: 内部错误。
+H3_STREAM_CREATION_ERROR: 流创建错误。
+H3_CLOSED_CRITICAL_STREAM: 关闭关键流。
+H3_FRAME_UNEXPECTED: 意外的帧。
+H3_FRAME_ERROR: 帧错误。
+H3_EXCESSIVE_LOAD: 过载。
+H3_ID_ERROR: ID错误。
+H3_SETTINGS_ERROR: 设置错误。
+H3_MISSING_SETTINGS: 缺少设置。
+H3_REQUEST_REJECTED: 请求被拒绝。
+H3_REQUEST_CANCELLED: 请求被取消。
+H3_REQUEST_INCOMPLETE: 请求不完整。
+H3_CONNECT_ERROR: 连接错误。
+H3_VERSION_FALLBACK: 版本回退。
+ * /
 typedef enum {
     H3_NO_ERROR                     = 0x100,
     H3_GENERAL_PROTOCOL_ERROR       = 0x101,

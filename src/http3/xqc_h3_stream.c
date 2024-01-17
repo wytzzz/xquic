@@ -205,7 +205,7 @@ xqc_h3_stream_write_headers(xqc_h3_stream_t *h3s, xqc_http_headers_t *headers, u
     xqc_log_event(h3s->log, QPACK_HEADERS_ENCODED, XQC_LOG_HEADER_FRAME, h3s->stream->stream_id, data->data_len);
 
     /* write HEADERS frame */
-    ret = xqc_h3_frm_write_headers(&h3s->send_buf, data, fin);
+        ret = xqc_h3_frm_write_headers(&h3s->send_buf, data, fin);
     if (ret != XQC_OK) {
         xqc_log(h3s->log, XQC_LOG_ERROR, "|write HEADERS frame error|stream_id:%ui|fin:%d|",
                 h3s->stream_id, (unsigned int)fin);
@@ -1799,6 +1799,7 @@ xqc_h3_stream_read_notify(xqc_stream_t *stream, void *user_data)
     xqc_h3_conn_t   *h3c = (xqc_h3_conn_t *)stream->stream_conn->proto_data;
 
     /* server h3_stream might not be created yet */
+    //获取HTTP3流对象h3s,如果不存在则创建。
     if (!user_data) {
         h3s = xqc_h3_stream_create(h3c, stream, XQC_H3_STREAM_TYPE_UNKNOWN, NULL);
         if (!h3s) {
@@ -1811,7 +1812,8 @@ xqc_h3_stream_read_notify(xqc_stream_t *stream, void *user_data)
     } else {
         h3s = (xqc_h3_stream_t *)user_data;
     }
-
+    
+    //检查是否已在读处理流程中,如果是则直接返回
     /* in case that read notify */
     if (h3s->flags & XQC_HTTP3_STREAM_IN_READING) {
         xqc_log(h3c->log, XQC_LOG_ERROR, "|read again|stream_id:%ui|", stream->stream_id);
@@ -1820,6 +1822,7 @@ xqc_h3_stream_read_notify(xqc_stream_t *stream, void *user_data)
     h3s->flags |= XQC_HTTP3_STREAM_IN_READING;
 
     /* check goaway */
+    //检查是否收到过GOAWAY帧,如果是则发送STOP_SENDING帧
     if (xqc_h3_conn_is_goaway_recved(h3c, stream->stream_id) == XQC_TRUE) {
         /*
          * peer sent goaway and keep on sending data, 
@@ -1838,6 +1841,7 @@ xqc_h3_stream_read_notify(xqc_stream_t *stream, void *user_data)
 
     xqc_bool_t fin = XQC_FALSE;
     /* if stream is blocked, recv and buffer data */
+    // 调用处理被阻塞数据的函数。
     if (h3s->flags & XQC_HTTP3_STREAM_FLAG_QPACK_DECODE_BLOCKED) {
         ret = xqc_h3_stream_process_blocked_data(stream, h3s, &fin);
 
@@ -1848,7 +1852,8 @@ xqc_h3_stream_read_notify(xqc_stream_t *stream, void *user_data)
             xqc_log(h3c->log, XQC_LOG_ERROR, "|xqc_h3_stream_process_blocked_data error|%d|", ret);
             return ret;
         }
-
+    
+    //正常处理stream data
     } else {
         /* if stream is not blocked, recv data and process */
         ret = xqc_h3_stream_process_data(stream, h3s, &fin);
@@ -1862,6 +1867,7 @@ xqc_h3_stream_read_notify(xqc_stream_t *stream, void *user_data)
         }
 
         /* REQUEST: notify DATA to application ASAP */
+        //如果是请求流
         if (h3s->type == XQC_H3_STREAM_TYPE_REQUEST
             && !xqc_list_empty(&h3s->h3r->body_buf))
         {

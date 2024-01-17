@@ -8,6 +8,7 @@
 #include "src/common/utils/var_buf/xqc_var_buf.h"
 
 
+//h3的帧类型
 typedef enum xqc_h3_frm_type_s {
     XQC_H3_FRM_DATA                 = 0x00,
     XQC_H3_FRM_HEADERS              = 0x01,

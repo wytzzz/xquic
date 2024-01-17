@@ -1167,7 +1167,7 @@ xqc_demo_cli_h3_request_send(xqc_demo_cli_user_stream_t *user_stream)
         if (user_stream->start_time == 0) {
             user_stream->start_time = xqc_now();
         }
-
+        //发送header
         ret = xqc_h3_request_send_headers(user_stream->h3_request, &user_stream->h3_hdrs, 1);
         if (ret < 0) {
             printf("xqc_demo_cli_h3_request_send error %zd\n", ret);
@@ -1180,6 +1180,7 @@ xqc_demo_cli_h3_request_send(xqc_demo_cli_user_stream_t *user_stream)
     return ret;
 }
 
+//h3->quic写数据
 int
 xqc_demo_cli_h3_request_write_notify(xqc_h3_request_t *h3_request, void *user_data)
 {
@@ -1193,6 +1194,7 @@ xqc_demo_cli_h3_request_write_notify(xqc_h3_request_t *h3_request, void *user_da
 }
 
 
+//h3->quic读取数据
 int
 xqc_demo_cli_h3_request_read_notify(xqc_h3_request_t *h3_request, xqc_request_notify_flag_t flag,
     void *user_data)
@@ -2410,7 +2412,8 @@ xqc_demo_cli_init_alpn_ctx(xqc_demo_cli_ctx_t *ctx)
         printf("init hq context error, ret: %d\n", ret);
         return ret;
     }
-
+    
+    //h3回调实现
     xqc_h3_callbacks_t h3_cbs = {
         .h3c_cbs = {
             .h3_conn_create_notify = xqc_demo_cli_h3_conn_create_notify,

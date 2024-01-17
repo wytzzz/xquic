@@ -1412,8 +1412,8 @@ xqc_stream_send(xqc_stream_t *stream, unsigned char *send_data, size_t send_data
 
     while (offset < send_data_size || fin_only) {
             
-        //。如果发送方被阻塞的时间长于空闲超时定时器（第10.1节），即使发送方有可用于传输的数据，接收方也可能关闭连接
-        //。为了防止连接关闭，受流控阻塞的发送方应该（SHOULD）在没有ACK触发包数据包传输时定期发送
+        
+        //流控
         if (pkt_type == XQC_PTYPE_SHORT_HEADER) {
             ret = xqc_stream_do_send_flow_ctl(stream);
             if (ret) {
@@ -1421,7 +1421,8 @@ xqc_stream_send(xqc_stream_t *stream, unsigned char *send_data, size_t send_data
                 goto do_buff;
             }
         }
-
+        
+        //发送队列size
         if (!xqc_send_queue_can_write(conn->conn_send_queue)) {
             conn->conn_send_queue->sndq_full = XQC_TRUE;
             xqc_log(conn->log, XQC_LOG_DEBUG, "|too many packets used|sndq_packets_used:%ud|", conn->conn_send_queue->sndq_packets_used);
@@ -1429,7 +1430,8 @@ xqc_stream_send(xqc_stream_t *stream, unsigned char *send_data, size_t send_data
             goto do_buff;
         }
 
-
+    
+        //0rtt最大数量
         if (pkt_type == XQC_PTYPE_0RTT && conn->zero_rtt_count >= XQC_PACKET_0RTT_MAX_COUNT) {
             xqc_log(conn->log, XQC_LOG_DEBUG, "|too many 0rtt packets|zero_rtt_count:%ud|", conn->zero_rtt_count);
             ret = -XQC_EAGAIN;
@@ -1440,7 +1442,8 @@ xqc_stream_send(xqc_stream_t *stream, unsigned char *send_data, size_t send_data
             xqc_conn_check_app_limit(conn);
             check_app_limit = 0;
         }
-
+        
+        //组装packet
         ret = xqc_write_stream_frame_to_packet(conn, stream, pkt_type,
                                                fin,
                                                send_data + offset,

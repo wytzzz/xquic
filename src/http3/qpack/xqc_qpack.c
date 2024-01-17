@@ -251,6 +251,7 @@ xqc_qpack_on_encoder_ins(xqc_qpack_t *qpk, xqc_ins_enc_ctx_t *ctx)
     xqc_log(qpk->log, XQC_LOG_DEBUG, "|recv encoder ins|type:%d|", ctx->type);
 
     switch (ctx->type) {
+    //SET_DYNAMIC_TABLE_CAPACITY: 设置解码器动态表容量
     case XQC_INS_TYPE_ENC_SET_DTABLE_CAP:
         if (ctx->capacity.value > qpk->dec_max_cap) {
             xqc_log(qpk->log, XQC_LOG_ERROR,
@@ -258,20 +259,21 @@ xqc_qpack_on_encoder_ins(xqc_qpack_t *qpk, xqc_ins_enc_ctx_t *ctx)
                     ctx->capacity.value, qpk->dec_max_cap);
             return -XQC_QPACK_SET_DTABLE_CAP_ERROR;
         }
+
         ret = xqc_decoder_set_dtable_cap(qpk->dec, ctx->capacity.value);
         break;
-
+    //INSERT_NAME_REF: 插入动态表名称引用。
     case XQC_INS_TYPE_ENC_INSERT_NAME_REF:
         ret = xqc_decoder_insert_name_ref(qpk->dec, ctx->table, ctx->name_index.value, 
                                           ctx->value->value->data, ctx->value->value->data_len);
         break;
-
+    //INSERT_LITERAL: 插入动态表字面量。
     case XQC_INS_TYPE_ENC_INSERT_LITERAL:
         ret = xqc_decoder_insert_literal(qpk->dec, ctx->name->value->data,
                                          ctx->name->value->data_len, ctx->value->value->data,
                                          ctx->value->value->data_len);
         break;
-
+    //DUPLICATE: 重复动态表中的条目。
     case XQC_INS_TYPE_ENC_DUP:
         ret = xqc_decoder_duplicate(qpk->dec, ctx->name_index.value);
         break;
@@ -303,6 +305,7 @@ xqc_qpack_process_encoder(xqc_qpack_t *qpk, unsigned char *data, size_t data_len
                 ctx->type, ctx->state);
 
         /* parse instruction bytes */
+        ///循环解析指令字节,调用xqc_ins_parse_encoder()解析
         read = xqc_ins_parse_encoder(data + processed, data_len - processed, ctx);
         if (read < 0) {
             xqc_log(qpk->log, XQC_LOG_ERROR, "|parse encoder instruction error|ret:%d|type:%d"
@@ -319,6 +322,7 @@ xqc_qpack_process_encoder(xqc_qpack_t *qpk, unsigned char *data, size_t data_len
         }
 
         /* process instruction */
+        //如果解析完成一个指令,调用xqc_qpack_on_encoder_ins()执行指令。
         if (ctx->state == XQC_INS_ES_STATE_FINISH) {
             xqc_log_event(qpk->log, QPACK_INSTRUCTION_PARSED, XQC_LOG_ENCODER_EVENT, ctx);
             ret = xqc_qpack_on_encoder_ins(qpk, ctx);
@@ -333,6 +337,7 @@ xqc_qpack_process_encoder(xqc_qpack_t *qpk, unsigned char *data, size_t data_len
      * get insertion into decoder's dtable, reply Insert Count Increment to peer
      * notify here rather than xqc_qpack_on_encoder_ins to reduce ICI count
      */
+    //检查解码器动态表的插入量是否增加,如果是则通知对端Incremental Insert Count
     if (xqc_qpack_get_dec_insert_count(qpk) > ori_krc) {
         ret = xqc_qpack_notify_insert_cnt_increment(
             qpk, (xqc_qpack_get_dec_insert_count(qpk) - ori_krc));

@@ -178,6 +178,14 @@ typedef struct xqc_h3_ext_bytestream_stats_s {
 } xqc_h3_ext_bytestream_stats_t;
 
 /* connection settings for http3 */
+/*
+max_field_section_size: MAX_FIELD_SECTION_SIZE设置,用于限制请求头和响应头每个字段段的最大大小。
+max_pushes: MAX_PUSH_STREAMS设置,服务器可推送流的最大数量。
+qpack_enc_max_table_capacity: QPACK编码器动态表的最大容量设置。
+qpack_dec_max_table_capacity: QPACK解码器动态表的最大容量设置。
+qpack_blocked_streams: MAX_BLOCKED_STREAMS,允许被QPACK阻塞的最大流数量。
+qpack_compat_duplicate: 针对原始QPACK编码器重复策略的兼容性设
+*/
 typedef struct xqc_h3_conn_settings_s {
     /* MAX_FIELD_SECTION_SIZE of http3 */
     uint64_t max_field_section_size;
@@ -320,7 +328,10 @@ typedef struct xqc_h3_conn_callbacks_s {
 
 /** 
  * @brief http3 request callbacks for application layer
+ *
  */
+
+//h3请求回调
 typedef struct xqc_h3_request_callbacks_s {
     /* request creation notify. it will be triggered after a request was created, and is required
        for server, optional for client */
@@ -357,6 +368,8 @@ typedef struct xqc_h3_ext_bytestream_callbacks_s {
 } xqc_h3_ext_bytestream_callbacks_t;
 
 
+
+//h3相关的回调
 typedef struct xqc_h3_callbacks_s {
 
     /* http3 connection callbacks */
