@@ -44,7 +44,7 @@ typedef enum {
  *  QUIC Http/3 Protocol error codes
  */
 
-/**
+/*
 H3_NO_ERROR: 没有错误。
 H3_GENERAL_PROTOCOL_ERROR: 一般协议错误。
 H3_INTERNAL_ERROR: 内部错误。
@@ -60,8 +60,7 @@ H3_REQUEST_REJECTED: 请求被拒绝。
 H3_REQUEST_CANCELLED: 请求被取消。
 H3_REQUEST_INCOMPLETE: 请求不完整。
 H3_CONNECT_ERROR: 连接错误。
-H3_VERSION_FALLBACK: 版本回退。
- * /
+H3_VERSION_FALLBACK: 版本回退。*/
 typedef enum {
     H3_NO_ERROR                     = 0x100,
     H3_GENERAL_PROTOCOL_ERROR       = 0x101,

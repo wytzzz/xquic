@@ -2353,7 +2353,6 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
     int                     has_reinjection = 0;
 
     c       = path->parent_conn;
-    //
     sndq    = &c->conn_send_queue->sndq_unacked_packets[pns];
 
     /* on PTO xquic will try to send 2 ack-eliciting pkts at most. and server
@@ -2381,7 +2380,6 @@ xqc_path_send_one_or_two_ack_elicit_pkts(xqc_path_ctx_t *path,
     xqc_list_for_each_safe(pos, next, sndq) {
         packet_out = xqc_list_entry(pos, xqc_packet_out_t, po_list);
         
-        。
         if (xqc_send_ctl_indirectly_ack_or_drop_po(c, packet_out)) {
             continue;
         }

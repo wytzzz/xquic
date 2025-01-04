@@ -460,7 +460,7 @@ xqc_stream_do_create_flow_ctl(xqc_connection_t *conn, xqc_stream_id_t stream_id,
     //根据流类型检查可发送流数量是否超限。
         if (stream_type == XQC_CLI_BID || stream_type == XQC_SVR_BID) {
             if (conn->cur_stream_id_bidi_local >= conn->conn_flow_ctl.fc_max_streams_bidi_can_send) {
-                xqc_log(conn->logr, XQC_LOG_ERROR, "|exceed max_streams_bidi_can_send:%ui|",
+                xqc_log(conn->log, XQC_LOG_ERROR, "|exceed max_streams_bidi_can_send:%ui|",
                         conn->conn_flow_ctl.fc_max_streams_bidi_can_send);
                 //如果超限,写入STREAMS_BLOCKED帧告知对端,返回错误。
                 xqc_write_streams_blocked_to_packet(conn, conn->conn_flow_ctl.fc_max_streams_bidi_can_send, 1);
