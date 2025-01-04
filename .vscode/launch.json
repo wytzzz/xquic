@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb", // 使用 gdb 或 lldb 调试器
+            "request": "launch",
+            "name": "server",
+            "program": "${workspaceFolder}/build/tests/test_server", // 替换为你的可执行文件路径
+            "args": [
+                "-l d" // 如果需要传递参数，添加到这里
+            ],
+ 
+            "cwd": "${workspaceFolder}", // 设置工作目录
+         
+        }
+    ]
+}
