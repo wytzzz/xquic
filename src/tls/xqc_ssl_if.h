@@ -28,10 +28,14 @@ xqc_int_t xqc_ssl_ctx_set_cipher_suites(SSL_CTX *ctx, const char *ciphers);
 /**
  * @brief early data related functions
  */
-void xqc_ssl_ctx_enable_max_early_data(SSL_CTX *ctx);
-xqc_bool_t xqc_ssl_session_is_early_data_enabled(SSL_SESSION *session);
-xqc_bool_t xqc_ssl_is_early_data_accepted(SSL *ssl);
-void xqc_ssl_enable_max_early_data(SSL *ssl);
+
+/*
+在会话恢复时，客户端可以立即发送数据，而无需等待完整的握手完成。
+*/
+void xqc_ssl_ctx_enable_max_early_data(SSL_CTX *ctx); //启用服务器端的最大0RTT数据支持。
+xqc_bool_t xqc_ssl_session_is_early_data_enabled(SSL_SESSION *session); //检查指定的会话是否启用了0RTT数据功能
+xqc_bool_t xqc_ssl_is_early_data_accepted(SSL *ssl); //用于客户端决定是否发送早期数据，或服务器决定是否接受早期数据。
+void xqc_ssl_enable_max_early_data(SSL *ssl); 
 
 xqc_int_t xqc_ssl_get_certs_array(SSL *ssl, X509_STORE_CTX *store_ctx, unsigned char **certs_array,
     size_t array_cap, size_t *certs_array_len, size_t *certs_len);

@@ -456,19 +456,38 @@ xqc_crypto_derive_header_protection_key(xqc_crypto_t *crypto, uint8_t *dest, siz
 
 #define XQC_MAX_KNP_LEN 64
 
-//了Xquic中从secrets导出数据包保护所需的密钥材料
+/*
+ * xqc_crypto_derive_keys - 从 secrets 中派生数据包保护所需的密钥材料
+ *
+ * 此函数用于从 QUIC 的 `secret` 中派生出数据包保护所需的密钥材料，包括：
+ *   - 加密密钥 (key)
+ *   - 初始化向量 (IV)
+ *   - 包头保护密钥 (header protection key, hp)
+ *
+ * 根据密钥用途（接收或发送），将派生的密钥存储到对应的加密上下文中。
+ *
+ * 参数:
+ *   crypto - QUIC 的加密上下文，包含密钥和算法信息。
+ *   secret - 输入的密钥材料，用于派生密钥、IV 和 HP。
+ *   secretlen - 输入密钥材料的长度。
+ *   type - 密钥的用途（接收或发送），如 XQC_KEY_TYPE_RX_READ 或 XQC_KEY_TYPE_TX_WRITE。
+ *
+ * 返回值:
+ *   - XQC_OK: 成功派生密钥并存储。
+ *   - 其他错误码: 失败，具体错误码见返回值。
+ */
 xqc_int_t
 xqc_crypto_derive_keys(xqc_crypto_t *crypto, const uint8_t *secret, size_t secretlen,
     xqc_key_type_t type)
 {
-    /* derive packet protection keys (includes key & iv & hp) */
+    /* 定义用于存储派生密钥的缓冲区 */
     uint8_t key[XQC_MAX_KNP_LEN] = {0}, iv[XQC_MAX_KNP_LEN] = {0}, hp[XQC_MAX_KNP_LEN] = {0}; 
     size_t  keycap = XQC_MAX_KNP_LEN,   ivcap = XQC_MAX_KNP_LEN,   hpcap = XQC_MAX_KNP_LEN;
     size_t  keylen = 0,                 ivlen = 0,                 hplen = 0;
 
     xqc_int_t ret;
     
-    //从secret派生出数据包保护的key、iv和header protection key。
+    // 从 secret 派生加密密钥 (key)
     ret = xqc_crypto_derive_packet_protection_key(crypto, key, keycap, &keylen, secret, secretlen);
     if (ret != XQC_OK || keylen <= 0) {
         xqc_log(crypto->log, XQC_LOG_ERROR,
@@ -476,7 +495,7 @@ xqc_crypto_derive_keys(xqc_crypto_t *crypto, const uint8_t *secret, size_t secre
         return ret;
     }
 
-
+    // 从 secret 派生初始化向量 (IV)
     ret = xqc_crypto_derive_packet_protection_iv(crypto, iv, ivcap, &ivlen, secret, secretlen);
     if (ret != XQC_OK || ivlen <= 0) {
         xqc_log(crypto->log, XQC_LOG_ERROR,
@@ -484,6 +503,7 @@ xqc_crypto_derive_keys(xqc_crypto_t *crypto, const uint8_t *secret, size_t secre
         return ret;
     }
 
+    // 从 secret 派生包头保护密钥 (HP key)
     ret = xqc_crypto_derive_header_protection_key(crypto, hp, hpcap, &hplen, secret, secretlen);
     if (ret != XQC_OK || hplen <= 0) {
         xqc_log(crypto->log, XQC_LOG_ERROR,
@@ -491,61 +511,64 @@ xqc_crypto_derive_keys(xqc_crypto_t *crypto, const uint8_t *secret, size_t secre
         return ret;
     }
 
-    /* store keys */
+    /* 存储派生的密钥 */
     xqc_crypto_km_t *p_ckm = NULL;
     xqc_vec_t *p_hp = NULL;
     void **p_hp_ctx = NULL;
     
-    //根据密钥用途(发送或接收),保存到对应加密CONTEXT的密钥字段中。
+    // 根据密钥用途 (type)，选择存储位置
     switch (type) {
-    case XQC_KEY_TYPE_RX_READ:
+    case XQC_KEY_TYPE_RX_READ:  // 接收方向的密钥
         p_ckm = &crypto->keys.rx_ckm[crypto->key_phase];
         p_hp = &crypto->keys.rx_hp;
         p_hp_ctx = &crypto->keys.rx_hp_ctx;
         break;
 
-    case XQC_KEY_TYPE_TX_WRITE:
+    case XQC_KEY_TYPE_TX_WRITE:  // 发送方向的密钥
         p_ckm = &crypto->keys.tx_ckm[crypto->key_phase];
         p_hp = &crypto->keys.tx_hp;
         p_hp_ctx = &crypto->keys.tx_hp_ctx;
         break;
 
-    default:
+    default:  // 非法的密钥类型
         xqc_log(crypto->log, XQC_LOG_ERROR, "|illegal crypto secret type|type:%d|", type);
         return -XQC_TLS_INVALID_ARGUMENT;
     }
     
+    // 将派生的 key 存储到加密上下文中
     if (xqc_vec_assign(&p_ckm->key, key, keylen) != XQC_OK) {
         return -XQC_TLS_DERIVE_KEY_ERROR;
     }
 
+    // 将派生的 IV 存储到加密上下文中
     if (xqc_vec_assign(&p_ckm->iv, iv, ivlen) != XQC_OK) {
         return -XQC_TLS_DERIVE_KEY_ERROR;
     }
 
+    // 将派生的 HP key 存储到加密上下文中
     if (xqc_vec_assign(p_hp, hp, hplen) != XQC_OK) {
         return -XQC_TLS_DERIVE_KEY_ERROR;
     }
     
-    //如果启用了AEAD保护,用key和iv创建AEAD算法CONTEXT,保存到ckm中
+    // 如果启用了 AEAD 加密，创建 AEAD 上下文并存储
     if (crypto->pp_aead.aead) {
-        xqc_aead_ctx_free(p_ckm->aead_ctx);
+        xqc_aead_ctx_free(p_ckm->aead_ctx);  // 释放旧的 AEAD 上下文
         p_ckm->aead_ctx = xqc_aead_ctx_new(&crypto->pp_aead, type, key, ivlen);
         if (!p_ckm->aead_ctx) {
             return -XQC_TLS_DERIVE_KEY_ERROR;
         }
     }
     
-    //如果启用了包头保护,用hp key创建header protection CONTEXT,保存到对应字段
+    // 如果启用了包头保护，创建 HP 上下文并存储
     if (crypto->hp_cipher.cipher) {
-        xqc_hp_ctx_free(*p_hp_ctx);
+        xqc_hp_ctx_free(*p_hp_ctx);  // 释放旧的 HP 上下文
         *p_hp_ctx = xqc_hp_ctx_new(&crypto->hp_cipher, hp);
         if (!(*p_hp_ctx)) {
             return -XQC_TLS_DERIVE_KEY_ERROR;
         }
     }
 
-    return XQC_OK;
+    return XQC_OK;  // 成功派生并存储密钥
 }
 
 xqc_int_t
@@ -601,7 +624,25 @@ xqc_crypto_is_key_ready(xqc_crypto_t *crypto, xqc_key_type_t type)
 
 
 /* derive initial secret (for initial encryption level) */
-
+/**
+ * @brief 生成客户端和服务器的初始密钥（Initial Secret）
+ *
+ * @param cli_initial_secret      输出参数，生成的客户端初始密钥
+ * @param cli_initial_secret_len  客户端初始密钥的长度
+ * @param svr_initial_secret      输出参数，生成的服务器初始密钥
+ * @param svr_initial_secret_len  服务器初始密钥的长度
+ * @param cid                     连接 ID，用于生成初始密钥的输入
+ * @param salt                    固定的盐值，用于生成初始密钥的输入
+ * @param saltlen                 盐值的长度
+ *
+ * @return XQC_OK 表示成功，其他值表示失败
+ *
+ * @details
+ * 该函数基于 QUIC 协议的密钥派生机制，生成客户端和服务器的初始密钥，用于保护初始数据包。
+ * 初始密钥的生成基于 HKDF（HMAC-based Key Derivation Function），具体步骤如下：
+ * 1. 使用连接 ID（Connection ID, CID）和固定的盐值（Salt）通过 `HKDF-Extract` 生成一个通用的初始密钥。
+ * 2. 使用通用的初始密钥通过 `HKDF-Expand-Label` 分别派生出客户端和服务器的初始密钥。
+ */
 xqc_int_t
 xqc_crypto_derive_initial_secret(uint8_t *cli_initial_secret, size_t cli_initial_secret_len,
     uint8_t *svr_initial_secret, size_t svr_initial_secret_len, const xqc_cid_t *cid,
@@ -615,6 +656,7 @@ xqc_crypto_derive_initial_secret(uint8_t *cli_initial_secret, size_t cli_initial
     xqc_digest_init_to_sha256(&md);
 
     /* initial secret */
+    //随机化
     xqc_int_t ret = xqc_hkdf_extract(initial_secret, INITIAL_SECRET_MAX_LEN, cid->cid_buf,
                                      cid->cid_len, salt, saltlen, &md);
     if (ret != XQC_OK) {
@@ -622,6 +664,7 @@ xqc_crypto_derive_initial_secret(uint8_t *cli_initial_secret, size_t cli_initial
     }
 
     /* derive client initial secret for packet protection */
+    //打标签
     ret = xqc_hkdf_expand_label(cli_initial_secret, cli_initial_secret_len,
                                 initial_secret, INITIAL_SECRET_MAX_LEN,
                                 LABEL_CLI_IN, xqc_lengthof(LABEL_CLI_IN), &md);
@@ -647,54 +690,78 @@ xqc_crypto_aead_tag_len(xqc_crypto_t *crypto)
     return crypto->pp_aead.taglen;
 }
 
+/*
+ * xqc_crypto_derive_updated_keys - 更新 QUIC 的加密密钥
+ *
+ * 此函数用于在密钥更新时，从当前的加密密钥派生出新的密钥材料。
+ * QUIC 协议中，密钥更新是通过 HKDF 扩展标签派生新的密钥材料实现的。
+ * 新的密钥材料包括：
+ *   - 应用流量密钥 (Application Traffic Secret)
+ *   - 加密密钥 (Key)
+ *   - 初始化向量 (IV)
+ *
+ * 参数:
+ *   crypto - QUIC 的加密上下文，包含当前密钥和算法信息。
+ *   type - 密钥的用途（接收或发送），如 XQC_KEY_TYPE_RX_READ 或 XQC_KEY_TYPE_TX_WRITE。
+ *
+ * 返回值:
+ *   - XQC_OK: 成功派生并更新密钥。
+ *   - 其他错误码: 失败，具体错误码见返回值。
+ */
 xqc_int_t
 xqc_crypto_derive_updated_keys(xqc_crypto_t *crypto, xqc_key_type_t type)
 {
     xqc_int_t ret;
 
+    // 当前密钥阶段和更新后的密钥阶段
     xqc_uint_t current_key_phase = crypto->key_phase;
-    xqc_uint_t updated_key_phase = current_key_phase ^ 1;
+    xqc_uint_t updated_key_phase = current_key_phase ^ 1;  // 切换密钥阶段
 
     xqc_crypto_km_t *current_ckm, *updated_ckm;
+
+    // 根据密钥用途选择当前和更新后的密钥上下文
     switch (type) {
-    case XQC_KEY_TYPE_RX_READ:
+    case XQC_KEY_TYPE_RX_READ:  // 接收方向的密钥
         current_ckm = &crypto->keys.rx_ckm[current_key_phase];
         updated_ckm = &crypto->keys.rx_ckm[updated_key_phase];
         break;
 
-    case XQC_KEY_TYPE_TX_WRITE:
+    case XQC_KEY_TYPE_TX_WRITE:  // 发送方向的密钥
         current_ckm = &crypto->keys.tx_ckm[current_key_phase];
         updated_ckm = &crypto->keys.tx_ckm[updated_key_phase];
         break;
 
-    default:
+    default:  // 非法的密钥类型
         xqc_log(crypto->log, XQC_LOG_ERROR, "|illegal crypto secret type|type:%d|", type);
         return -XQC_TLS_INVALID_ARGUMENT;
     }
 
-
-    /* update application traffic secret */
-    static uint8_t LABEL[] = "quic ku";
+    /* 更新应用流量密钥 (Application Traffic Secret) */
+    static uint8_t LABEL[] = "quic ku";  // QUIC 密钥更新的标签
     uint8_t dest_buf[XQC_MAX_KNP_LEN];
 
+    // 检查当前密钥长度是否有效
     if (current_ckm->secret.len > XQC_MAX_KNP_LEN) {
         return -XQC_TLS_UPDATE_KEY_ERROR;
     }
 
+    // 使用 HKDF 扩展标签派生新的应用流量密钥
     ret = xqc_hkdf_expand_label(dest_buf, current_ckm->secret.len,
                                 current_ckm->secret.base, current_ckm->secret.len,
                                 LABEL, xqc_lengthof(LABEL), &crypto->md);
     if (ret != XQC_OK) {
         return -XQC_TLS_UPDATE_KEY_ERROR;
     }
+
+    // 将派生的应用流量密钥存储到更新后的密钥上下文
     xqc_vec_assign(&updated_ckm->secret, dest_buf, current_ckm->secret.len);
 
-
-    /* derive packet protection key with new secret */
+    /* 使用新的应用流量密钥派生加密密钥和初始化向量 */
     uint8_t key[XQC_MAX_KNP_LEN] = {0}, iv[XQC_MAX_KNP_LEN] = {0}; 
     size_t  keycap = XQC_MAX_KNP_LEN,   ivcap = XQC_MAX_KNP_LEN;
     size_t  keylen = 0,                 ivlen = 0;
 
+    // 派生加密密钥
     ret = xqc_crypto_derive_packet_protection_key(crypto, key, keycap, &keylen,
                                                   updated_ckm->secret.base,
                                                   updated_ckm->secret.len);
@@ -704,6 +771,7 @@ xqc_crypto_derive_updated_keys(xqc_crypto_t *crypto, xqc_key_type_t type)
         return -XQC_TLS_UPDATE_KEY_ERROR;
     }
 
+    // 派生初始化向量 (IV)
     ret = xqc_crypto_derive_packet_protection_iv(crypto, iv, ivcap, &ivlen,
                                                  updated_ckm->secret.base,
                                                  updated_ckm->secret.len);
@@ -713,22 +781,26 @@ xqc_crypto_derive_updated_keys(xqc_crypto_t *crypto, xqc_key_type_t type)
         return -XQC_TLS_UPDATE_KEY_ERROR;
     }
 
+    // 将派生的加密密钥存储到更新后的密钥上下文
     if (xqc_vec_assign(&updated_ckm->key, key, keylen) != XQC_OK) {
         return -XQC_TLS_UPDATE_KEY_ERROR;
     }
 
+    // 将派生的初始化向量存储到更新后的密钥上下文
     if (xqc_vec_assign(&updated_ckm->iv, iv, ivlen) != XQC_OK) {
         return -XQC_TLS_UPDATE_KEY_ERROR;
     }
 
+    /* 如果启用了 AEAD 加密，创建新的 AEAD 上下文 */
     if (crypto->pp_aead.aead) {
-        xqc_aead_ctx_free(updated_ckm->aead_ctx);
+        xqc_aead_ctx_free(updated_ckm->aead_ctx);  // 释放旧的 AEAD 上下文
         updated_ckm->aead_ctx = xqc_aead_ctx_new(&crypto->pp_aead, type, key, ivlen);
         if (!updated_ckm->aead_ctx) {
             return -XQC_TLS_UPDATE_KEY_ERROR;
         }
     }
-    return XQC_OK;
+
+    return XQC_OK;  // 成功更新密钥
 }
 
 void

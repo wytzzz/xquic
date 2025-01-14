@@ -2690,7 +2690,8 @@ xqc_conn_version_check(xqc_connection_t *c, uint32_t version)
 {
     xqc_engine_t *engine = c->engine;
     int i = 0;
-
+    
+    //这是服务端的行为.
     if (c->conn_type == XQC_CONN_TYPE_SERVER && c->version == XQC_IDRAFT_INIT_VER) {
 
         uint32_t *list = engine->config->support_version_list;
@@ -4922,7 +4923,6 @@ xqc_conn_tls_transport_params_cb(const uint8_t *tp, size_t len, void *user_data)
     /* sr token will only present in server's transport parameter, it means
        client have already confirmed server's cid, associate the sr token with
        server's cid */
-    //如果包含sr_token,将其保存到连接的dcid对象中,并插入hash表。
     if (params.stateless_reset_token_present) {
         /* it is supposed to be only one existing cid in the dcid set, find the
            first node and copy the sr token to that cid */
@@ -5127,6 +5127,7 @@ xqc_conn_tls_cert_verify_cb(const unsigned char *certs[], const size_t cert_len[
 }
 
 
+//保存session
 void
 xqc_conn_tls_session_cb(const char *data, size_t data_len, void *user_data)
 {

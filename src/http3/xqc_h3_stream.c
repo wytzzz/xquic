@@ -106,9 +106,24 @@ xqc_h3_stream_destroy(xqc_h3_stream_t *h3s)
 }
 
 
+/*
+ * xqc_h3_stream_send_buffer - 发送 HTTP/3 流的缓冲区数据
+ *
+ * 此函数用于从 HTTP/3 流的发送缓冲区中取出数据，通过底层 QUIC 传输流发送。
+ * 如果缓冲区中包含 FIN 标志，则会在发送完成后标记流的 FIN 状态。
+ *
+ * 参数:
+ *   h3s - HTTP/3 流对象，包含发送缓冲区和流的状态信息。
+ *
+ * 返回值:
+ *   - XQC_OK: 成功发送所有缓冲区数据。
+ *   - -XQC_EAGAIN: 数据未完全发送，需要再次调用。
+ *   - 其他负值: 发送失败，具体错误码见返回值。
+ */
 xqc_int_t
 xqc_h3_stream_send_buffer(xqc_h3_stream_t *h3s)
 {
+    // 检查 QUIC 传输流是否存在
     if (NULL == h3s->stream) {
         xqc_log(h3s->log, XQC_LOG_ERROR,
                 "|transport stream was NULL|stream_id:%ui|", h3s->stream_id);
@@ -116,57 +131,67 @@ xqc_h3_stream_send_buffer(xqc_h3_stream_t *h3s)
     }
 
     xqc_list_head_t *pos, *next;
+
+    // 遍历 HTTP/3 流的发送缓冲区链表
     xqc_list_for_each_safe(pos, next, &h3s->send_buf) {
         xqc_list_buf_t *list_buf = xqc_list_entry(pos, xqc_list_buf_t, list_head);
         xqc_var_buf_t *buf = list_buf->buf;
 
+        // 检查是否已经发送过 FIN 标志
         if (!(h3s->flags & XQC_HTTP3_STREAM_FLAG_FIN_SENT)) {
 
             if (buf->data != NULL) {
-                /* buf with bytes remain and buf with fin only */
+                /* 缓冲区中有未发送的数据，或者仅有 FIN 标志 */
                 if (buf->consumed_len < buf->data_len
                     || (buf->data_len == 0 && buf->fin_flag))
                 {
-                    /* send buffer with transport stream */
+                    /* 调用 QUIC 传输流接口发送数据 */
                     ssize_t sent = xqc_stream_send(h3s->stream, buf->data + buf->consumed_len,
                                                    buf->data_len - buf->consumed_len, buf->fin_flag);
                     if (sent < 0) {
-                        /* don't print XQC_EAGAIN and XQC_ESTREAM_RESET */
+                        // 忽略 XQC_EAGAIN 和 XQC_ESTREAM_RESET 错误
                         if (sent != -XQC_EAGAIN && sent != -XQC_ESTREAM_RESET) {
                             xqc_log(h3s->log, XQC_LOG_ERROR, "|xqc_stream_send error|ret:%z|", sent);
                         }
 
-                        return sent;
+                        return sent;  // 返回发送错误码
                     }
 
+                    // 更新已发送的数据长度
                     buf->consumed_len += sent;
+
+                    // 如果数据未完全发送，返回 EAGAIN，等待下一次发送
                     if (buf->consumed_len != buf->data_len) {
                         return -XQC_EAGAIN;
                     }
 
                 } else if (buf->data_len > 0) {
+                    // 如果缓冲区为空但仍尝试发送，记录错误日志
                     xqc_log(h3s->log, XQC_LOG_ERROR, "|send_buf is empty|buf->consumed_len:%uz"
                             "|buf->data_len:%uz", buf->consumed_len, buf->data_len);
                 }
 
-                /* a buffer with fin flag is sent, mark the FIN_SENT flag */
+                /* 如果缓冲区包含 FIN 标志且数据已全部发送，标记 FIN_SENT 状态 */
                 if (buf->data_len == buf->consumed_len && buf->fin_flag) {
                     h3s->flags |= XQC_HTTP3_STREAM_FLAG_FIN_SENT;
                 }
 
             } else {
+                // 如果缓冲区为空，记录错误日志
                 xqc_log(h3s->log, XQC_LOG_ERROR, "|send_buf is NULL|");
             }
 
         } else {
+            // 如果已经发送过 FIN 标志，但仍尝试发送数据，记录错误日志
             xqc_log(h3s->log, XQC_LOG_ERROR,
                     "|send data after fin sent|stream_id:%ui", h3s->stream_id);
         }
 
+        // 释放已发送的缓冲区
         xqc_list_buf_free(list_buf);
     }
 
-    return XQC_OK;
+    return XQC_OK;  // 成功发送所有缓冲区数据
 }
 
 
@@ -575,38 +600,57 @@ xqc_h3_stream_send_finish(xqc_h3_stream_t *h3s)
 }
 
 
+/*
+ * xqc_h3_stream_send_uni_stream_hdr - 发送 HTTP/3 单向流的类型头部
+ *
+ * 此函数用于在 HTTP/3 单向流中发送流类型头部。HTTP/3 的单向流需要在流的开头发送一个
+ * 表示流类型的头部（以变长整数的形式编码）。此头部用于区分流的用途，例如控制流、推送流等。
+ *
+ * 参数:
+ *   h3s - HTTP/3 流对象，包含流的类型和发送缓冲区。
+ *
+ * 返回值:
+ *   - XQC_OK: 成功发送流类型头部。
+ *   - -XQC_EMALLOC: 内存分配失败。
+ *   - 其他负值: 发送失败，具体错误码见返回值。
+ */
 xqc_int_t
 xqc_h3_stream_send_uni_stream_hdr(xqc_h3_stream_t *h3s)
 {
+    // 计算流类型头部的长度（变长整数编码长度）
     size_t len = xqc_vint_len_by_val(h3s->type);
+
+    // 创建用于存储流类型头部的缓冲区
     xqc_var_buf_t *buf = xqc_var_buf_create(len);
     if (buf == NULL) {
         xqc_log(h3s->log, XQC_LOG_ERROR, "|create buf for uni-stream type error|stream_id:%ui",
                 h3s->stream_id);
-        return -XQC_EMALLOC;
+        return -XQC_EMALLOC;  // 内存分配失败
     }
 
-    /* write uni stream type */
+    /* 写入单向流类型头部 */
     unsigned char *pos = buf->data;
-    pos = xqc_put_varint(pos, h3s->type);
-    buf->data_len = pos - buf->data;
+    pos = xqc_put_varint(pos, h3s->type);  // 将流类型编码为变长整数
+    buf->data_len = pos - buf->data;  // 更新缓冲区的有效数据长度
 
+    // 将流类型头部添加到发送缓冲区链表
     xqc_int_t ret = xqc_list_buf_to_tail(&h3s->send_buf, buf);
     if (ret != XQC_OK) {
         xqc_log(h3s->log, XQC_LOG_ERROR, "|add uni-stream hdr to send buf error|%d|stream_id:%ui",
                 ret, h3s->stream_id);
-        xqc_var_buf_free(buf);
-        return ret;
+        xqc_var_buf_free(buf);  // 释放缓冲区
+        return ret;  // 返回错误码
     }
 
+    // 调用发送缓冲区函数，尝试发送流类型头部
     ret = xqc_h3_stream_send_buffer(h3s);
     if (ret < 0 && ret != -XQC_EAGAIN) {
         xqc_log(h3s->log, XQC_LOG_ERROR, "|send uni-stream hdr error|%d|stream_id:%ui",
                 ret, h3s->stream_id);
-        return ret;
+        return ret;  // 发送失败，返回错误码
     }
 
-    return XQC_OK;
+    return XQC_OK;  // 成功发送流类型头部
 }
 
 

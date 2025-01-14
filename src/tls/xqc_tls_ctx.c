@@ -10,27 +10,27 @@
 
 
 typedef struct xqc_tls_ctx_s {
-    xqc_tls_type_t                  type;
+    xqc_tls_type_t                  type;  // TLS 上下文的类型，表示是客户端还是服务器。
 
     /* ssl context */
-    SSL_CTX                        *ssl_ctx;
+    SSL_CTX                        *ssl_ctx;  // OpenSSL 的 SSL 上下文，用于管理 TLS 会话的全局配置。
 
     /* general config for ssl */
-    xqc_engine_ssl_config_t         cfg;
+    xqc_engine_ssl_config_t         cfg;  // 通用的 SSL 配置参数，例如证书路径、加密算法等。
 
     /* callback functions for tls connection */
-    xqc_tls_callbacks_t             tls_cbs;
+    xqc_tls_callbacks_t             tls_cbs;  // 与 TLS 连接相关的回调函数，用于扩展和自定义行为。
 
     /* session ticket key */
-    xqc_ssl_session_ticket_key_t    session_ticket_key;
+    xqc_ssl_session_ticket_key_t    session_ticket_key;  // 会话票据密钥，用于支持会话恢复（如 0-RTT 和 1-RTT）。
 
     /* log handler */
-    xqc_log_t                      *log;
+    xqc_log_t                      *log;  // 日志处理器，用于记录 TLS 相关的调试信息和错误信息。
 
     /* the buffer of alpn, for server alpn selection */
-    unsigned char                  *alpn_list;
-    size_t                          alpn_list_sz;
-    size_t                          alpn_list_len;
+    unsigned char                  *alpn_list;  // ALPN 协商的协议列表缓冲区，用于声明或选择支持的应用层协议。
+    size_t                          alpn_list_sz;  // ALPN 缓冲区的总大小。
+    size_t                          alpn_list_len;  // ALPN 缓冲区中实际使用的长度。
 } xqc_tls_ctx_t;
 
 
@@ -56,10 +56,17 @@ xqc_create_client_ssl_ctx(xqc_tls_ctx_t *ctx)
     }
 
     /* enable session cache */
+    /*
+    客户端会尝试缓存会话信息（如会话 ID 或会话票据），以便在后续连接中重用这些信息，从而加速握手过程。
+    客户端和服务器在首次握手时协商一个会话 ID。
+    在后续连接中，客户端发送会话 ID，服务器通过缓存查找对应的会话信息并恢复会话。
+    */
     SSL_CTX_set_session_cache_mode(ssl_ctx, 
         SSL_SESS_CACHE_CLIENT | SSL_SESS_CACHE_NO_INTERNAL_STORE);
 
     /* set session ticket callback */
+    //当客户端和服务器完成完整的 TLS 握手，并成功协商出会话信息时，触发回调。
+    //如果会话恢复成功（即客户端发送的会话 ID 或会话票据被接受），不会触发该回调，因为没有新会话被创建。
     SSL_CTX_sess_set_new_cb(ssl_ctx, xqc_ssl_new_session_cb);
 
     /* set the lifetime of session */
@@ -77,6 +84,7 @@ fail:
 xqc_int_t
 xqc_create_server_ssl_ctx(xqc_tls_ctx_t *ctx)
 {
+    // 创建一个新的 SSL_CTX 对象，使用 TLS 通用方法
     SSL_CTX *ssl_ctx = SSL_CTX_new(TLS_method());
     if (NULL == ssl_ctx) {
         xqc_log(ctx->log, XQC_LOG_ERROR, "|create server SSL_CTX error|%s",
@@ -85,6 +93,7 @@ xqc_create_server_ssl_ctx(xqc_tls_ctx_t *ctx)
     }
 
     /* set tls version */
+    /* 设置支持的 TLS 版本为 TLS 1.3（最小和最大版本均为 TLS 1.3） */
     SSL_CTX_set_min_proto_version(ssl_ctx, TLS1_3_VERSION);
     SSL_CTX_set_max_proto_version(ssl_ctx, TLS1_3_VERSION);
 
@@ -101,12 +110,13 @@ xqc_create_server_ssl_ctx(xqc_tls_ctx_t *ctx)
     SSL_CTX_set_mode(ssl_ctx, SSL_MODE_RELEASE_BUFFERS);
 
     /* set curves list */
+    /* 设置支持的椭圆曲线列表 */
     if (SSL_CTX_set1_curves_list(ssl_ctx, ctx->cfg.groups) != XQC_SSL_SUCCESS) {
         xqc_log(ctx->log, XQC_LOG_ERROR, "|SSL_CTX_set1_groups_list failed| error info:%s|",
                 ERR_error_string(ERR_get_error(), NULL));
         goto fail;
     }
-
+    /* 设置私钥文件 */
     /* set private key file */
     if (SSL_CTX_use_PrivateKey_file(ssl_ctx, ctx->cfg.private_key_file, SSL_FILETYPE_PEM)
         != XQC_SSL_SUCCESS)
@@ -115,21 +125,21 @@ xqc_create_server_ssl_ctx(xqc_tls_ctx_t *ctx)
                 ERR_error_string(ERR_get_error(), NULL));
         goto fail;
     }
-
+    /* 设置证书文件 */
     /* set cert file */
     if (SSL_CTX_use_certificate_chain_file(ssl_ctx, ctx->cfg.cert_file) != XQC_SSL_SUCCESS) {
         xqc_log(ctx->log, XQC_LOG_ERROR, "|SSL_CTX_use_PrivateKey_file| error info:%s|",
                 ERR_error_string(ERR_get_error(), NULL));
         goto fail;
     }
-
+    /* 检查私钥是否与证书匹配 */
     /* check private key of certificate */
     if (SSL_CTX_check_private_key(ssl_ctx) != XQC_SSL_SUCCESS) {
         xqc_log(ctx->log, XQC_LOG_ERROR, "|SSL_CTX_check_private_key| error info:%s|",
                 ERR_error_string(ERR_get_error(), NULL));
         goto fail;
     }
-
+    /* 设置会话票据密钥回调函数 */
     /* set session ticket key callback */
     if (ctx->cfg.session_ticket_key_len == 0
         || ctx->cfg.session_ticket_key_data == NULL)
@@ -139,15 +149,19 @@ xqc_create_server_ssl_ctx(xqc_tls_ctx_t *ctx)
     } else {
         SSL_CTX_set_tlsext_ticket_key_cb(ssl_ctx, xqc_ssl_session_ticket_key_cb);
     }
-
+    /* 设置证书回调函数，用于动态加载证书 */
     SSL_CTX_set_cert_cb(ssl_ctx, xqc_ssl_cert_cb, ctx);
 
+    /* 设置默认的证书验证路径 */
     SSL_CTX_set_default_verify_paths(ssl_ctx);
+    /* 设置 ALPN（应用层协议协商）回调函数 */
     SSL_CTX_set_alpn_select_cb(ssl_ctx, xqc_ssl_alpn_select_cb, ctx);
 
+    /* 启用最大早期数据支持（0-RTT 数据） */
     xqc_ssl_ctx_enable_max_early_data(ssl_ctx);
+    /* 设置会话超时时间 */
     xqc_ssl_ctx_set_timeout(ssl_ctx, ctx->cfg.session_timeout);
-
+    /* 将创建的 SSL_CTX 对象保存到 TLS 上下文中 */
     ctx->ssl_ctx = ssl_ctx;
     return XQC_OK;
 

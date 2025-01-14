@@ -28,10 +28,12 @@
 #define XQC_UINT32_MAX  (0xffffffff)
 
 
+//7天过期
 #define XQC_SESSION_DEFAULT_TIMEOUT (7 * 24 * 60 * 60)
 
 #define INITIAL_SECRET_MAX_LEN  32
 
+//salt
 static const char * const (xqc_crypto_initial_salt)[] = {
     /* placeholder */
     [XQC_IDRAFT_INIT_VER] = 
@@ -87,6 +89,29 @@ static const char * const (xqc_crypto_retry_nonce)[] = {
 };
 
 
+/*
+
+xqc_ssl_session_ticket_key_t 并不是直接表示 NewSessionTicket 消息，
+而是用于管理加密和认证 ticket 字段的密钥。它的作用是支持服务器端加密和解密 ticket。
+
+会话票据的名称（用于标识密钥）。
+用于认证的 HMAC 密钥。
+用于加密的 AES 密钥
+
+服务器生成一个 xqc_ssl_session_ticket_key_t 实例：
+随机生成 name、hmac_key 和 aes_key。
+设置 size 为 64。
+使用 aes_key 加密会话票据内容。
+使用 hmac_key 对加密后的票据生成 HMAC。
+将加密后的票据和 name 发送给客户端
+
+客户端存储会话票据和 name。
+在后续连接中，将会话票据和 name 发送回服务器。
+服务器通过 name 找到对应的密钥。
+使用 hmac_key 验证票据的完整性。
+使用 aes_key 解密票据内容，恢复会话
+
+*/
 typedef struct xqc_ssl_session_ticket_key_s {
     size_t                      size;
     uint8_t                     name[16];

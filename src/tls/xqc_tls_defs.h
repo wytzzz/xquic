@@ -143,32 +143,33 @@ typedef xqc_int_t (*xqc_tls_cert_cb_pt)(const char *sni,
  */
 typedef struct xqc_tls_callbacks_s {
 
-    /* generated crypto data callback function */
+    /* 当 TLS 层生成加密数据时调用此回调函数 */
     xqc_tls_crypto_data_pt          crypto_data_cb;
 
-    /* transport parameter callback function */
+    /* 处理 QUIC 的传输参数（Transport Parameters） */
     xqc_tls_trans_param_pt          tp_cb;
 
-    /* alpn selection callback function */
+    /* 处理 ALPN（应用层协议协商），用于选择应用层协议（如 HTTP/3） */
     xqc_tls_alpn_select_pt          alpn_select_cb;
 
-    /* certificate verify callback function */
+    /* 验证对端的证书合法性 */
     xqc_tls_cert_pt                 cert_verify_cb;
 
-    /* session ticket callback function */
+    /* 处理 TLS 会话票据，用于支持会话恢复（如 0-RTT 和 1-RTT） */
     xqc_tls_session_pt              session_cb;
 
-    /* for writing tx and rx secrets */
+    /* 写入加密密钥（包括传输层的发送和接收密钥），用于调试和流量分析 */
     xqc_tls_keylog_pt               keylog_cb;
 
-    /* for notify tls errors, upper layer shall translate it 
-       to CRYPTO_ERROR and close connection */
+    /* 通知 TLS 层发生的错误，上层需要将其转换为 QUIC 的 CRYPTO_ERROR 并关闭连接 */
     xqc_tls_error_pt                error_cb;
 
-    /* for notify tls handshake completed, which is equivalent to QUIC handshake completed */
+    /* 通知 TLS 握手完成，相当于 QUIC 握手完成 */
     xqc_tls_handshake_completed_pt  hsk_completed_cb;
 
+    /* 处理证书相关逻辑，例如动态加载证书或自定义验证 */
     xqc_tls_cert_cb_pt              cert_cb;
+
 } xqc_tls_callbacks_t;
 
 

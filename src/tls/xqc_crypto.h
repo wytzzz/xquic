@@ -146,12 +146,14 @@ typedef struct xqc_crypto_km_s {
 //xqc_crypto_keys_t 结构体用于保存 QUIC 连接加密所需的密钥材料。
 typedef struct xqc_crypto_keys_s {
     /* packet payload protect key */
-    //rx_ckm/tx_ckm:用于报文负载保护的密钥材料,rx/tx表示接收/发送方向,数组大小为key phase的数量。
+    //报文负载保护的密钥材料
+    //rx/tx表示接收/发送方向,数组大小为key phase的数量。
     xqc_crypto_km_t     rx_ckm[XQC_KEY_PHASE_CNT];
     xqc_crypto_km_t     tx_ckm[XQC_KEY_PHASE_CNT];
 
     /* packet header protect key */
-    //rx_hp/tx_hp:用于报头保护的密钥向量,rx/tx表示接收/发送方向。
+    //用于报头保护的密钥向量
+    //rx/tx表示接收/发送方向。
     xqc_vec_t           rx_hp;
     xqc_vec_t           tx_hp;
     void               *rx_hp_ctx;
@@ -172,7 +174,7 @@ typedef struct xqc_crypto_s {
 
     /* aead suites for packet payload protection */
     xqc_pkt_protect_aead_t      pp_aead;
-
+ 
     /* cipher suites for packet header protection */
     xqc_hdr_protect_cipher_t    hp_cipher;
 

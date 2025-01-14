@@ -1056,6 +1056,7 @@ xqc_crypto_stream_send(xqc_stream_t *stream,
             while (stream->stream_send_offset < send_data_num) {
                 unsigned int header_size = xqc_crypto_frame_header_size(stream->stream_send_offset,
                                                                         buf->data_len - offset);
+                //创建packet
                 packet_out = xqc_write_new_packet(c, pkt_type);
                 if (packet_out == NULL) {
                     return -XQC_EWRITE_PKT;

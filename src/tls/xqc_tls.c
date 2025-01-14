@@ -233,6 +233,8 @@ xqc_tls_init_client_ssl(xqc_tls_t *tls, xqc_tls_config_t *cfg)
     /* set verify if flag set */
     //如果需要证书验证,调用相关SSL API设置验证模式和回调函数xqc_ssl_cert_verify_cb。
     if (cfg->cert_verify_flag & XQC_TLS_CERT_FLAG_NEED_VERIFY) { 
+        //开启hostname匹配判断,如果证书中的主机名与指定的 hostname 不匹配，验证会失败。
+        //X509_VERIFY_PARAM_set1_host 的作用是启用主机名验证，确保服务器的证书与指定的 hostname 匹配。
         if (X509_VERIFY_PARAM_set1_host(SSL_get0_param(ssl), hostname,
                                         strlen(hostname)) != XQC_SSL_SUCCESS)
         {
@@ -495,6 +497,7 @@ xqc_tls_derive_and_install_initial_keys(xqc_tls_t *tls, const xqc_cid_t *odcid)
 xqc_int_t
 xqc_tls_init_client(xqc_tls_t *tls, const xqc_cid_t *odcid)
 {
+    //初始化init密钥
     xqc_int_t ret = xqc_tls_derive_and_install_initial_keys(tls, odcid);
     if (ret != XQC_OK) {
         xqc_log(tls->log, XQC_LOG_ERROR, "|derive initial keys error|ret:%d", ret);
@@ -852,10 +855,19 @@ xqc_ssl_keylog_cb(const SSL *ssl, const char *line)
 }
 
 
+/*
+在客户端完成应用alph的协商. 
+客户端通过 ClientHello 消息中的 ALPN 扩展发送支持的协议列表（in 和 inlen）。
+服务器从自己的支持列表中选择一个协议（alpn_list 和 alpn_list_len）
+如果协商成功，将选择的协议通知给上层（通过 tls->cbs->alpn_select_cb 回调)
+out : 用于返回协商成功的协议名称。
+in : 输入参数，客户端支持的协议列表
+*/
 int
 xqc_ssl_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
     const unsigned char *in, unsigned int inlen, void *arg)
 {
+    //
     xqc_tls_t *tls = (xqc_tls_t *)SSL_get_app_data(ssl);
 
     /* get configured alpn_list */
@@ -868,6 +880,7 @@ xqc_ssl_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outle
     xqc_tls_ctx_get_alpn_list(tls->ctx, &alpn_list, &alpn_list_len);
 
     /* select alp */
+    //这是 OpenSSL 提供的函数，用于从客户端和服务器的协议列表中选择一个匹配的协议
     if (SSL_select_next_proto((unsigned char **)out, outlen, alpn_list, alpn_list_len, in, inlen)
         != OPENSSL_NPN_NEGOTIATED)
     {
@@ -878,6 +891,7 @@ xqc_ssl_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outle
 
     /* notify alpn selection to upper layer */
     const unsigned char *alpn = (uint8_t *)(*out);
+    //通知上层协议选择结果
     size_t alpn_len = *outlen;
     xqc_int_t ret = tls->cbs->alpn_select_cb(alpn, alpn_len, tls->user_data);
     if (XQC_OK != ret) {
@@ -888,6 +902,13 @@ xqc_ssl_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outle
     return SSL_TLSEXT_ERR_OK;
 }
 
+
+//会话票据密钥的名称（标识符）。
+//初始化向量（Initialization Vector）。
+//在加密时，生成随机的 IV。
+//在解密时，使用客户端返回的 IV。
+//OpenSSL 的加密上下文，用于初始化和执行 AES 加密或解密操作。
+//OpenSSL 的 HMAC 上下文，用于生成或验证票据的 HMAC。
 
 int
 xqc_ssl_session_ticket_key_cb(SSL *ssl, uint8_t *key_name, uint8_t *iv,
@@ -900,14 +921,25 @@ xqc_ssl_session_ticket_key_cb(SSL *ssl, uint8_t *key_name, uint8_t *iv,
 
     /* get session ticket key */
     xqc_ssl_session_ticket_key_t *key = NULL;
+    //从 SSL 对象中获取xqc_ssl_session_ticket_key_t
     xqc_tls_ctx_get_session_ticket_key(tls->ctx, &key);
     if (NULL == key) {
         xqc_log(tls->log, XQC_LOG_ERROR, "|get session ticket key failed|");
         return -1;
     }
-
+    
+    //加密会话票据
+    //当tls-server 生成 NewSessionTicket 消息时，使用此回调加密票据内容。
     if (encrypt == 1) {
         /* encrypt session ticket, returns 1 on success and -1 on error */
+        /*
+        加密包括：
+        生成随机的初始化向量（IV）。
+        使用 AES 加密票据内容。
+        使用 HMAC 生成认证码，确保票据的完整性。
+        */
+        //如果密钥大小为 48 字节，使用 AES-128-CBC。
+        //如果密钥大小为 64 字节，使用 AES-256-CBC。
         if (key->size == 48) {
             cipher = EVP_aes_128_cbc();
             size = 16;
@@ -916,29 +948,40 @@ xqc_ssl_session_ticket_key_cb(SSL *ssl, uint8_t *key_name, uint8_t *iv,
             cipher = EVP_aes_256_cbc();
             size = 32;
         }
-
+        
+        //调用 RAND_bytes 生成随机的初始化向量（IV）
         if (RAND_bytes(iv, EVP_CIPHER_iv_length(cipher)) != 1) {
             xqc_log(tls->log, XQC_LOG_ERROR, "|RAND_bytes() failed|");
             return -1;
         }
-
+        
+        //初始化aes加密
         if (EVP_EncryptInit_ex(cipher_ctx, cipher, NULL, key->aes_key, iv) != 1) {
             xqc_log(tls->log, XQC_LOG_ERROR, "|EVP_EncryptInit_ex() failed|");
             return -1;
         }
-
+        
+        //初始化hmac
         if (HMAC_Init_ex(hmac_ctx, key->hmac_key, size, digest, NULL) != 1) {
             xqc_log(tls->log, XQC_LOG_ERROR, "|HMAC_Init_ex() failed|");
             return -1;
-        }
-
+        }   
+        //将 key->name 拷贝到 key_name，从qs->ts
         memcpy(key_name, key->name, 16);
-
+    
+    //解密会话票据
+    //当tls-client发送会话票据回到服务器时，使用此回调解密票据内容。
+    /*
+    验证票据的密钥名称（key_name）。
+    使用 HMAC 验证票据的完整性。
+    使用 AES 解密票据内容。
+    */
     } else {
         /*
          * decrypt session ticket, returns -1 to abort the handshake,
          * 0 if decrypting the ticket failed, and 1 or 2 on success
          */
+        //比较ticket name
         if (memcmp(key_name, key->name, 16) != 0) {
             xqc_log(tls->log, XQC_LOG_ERROR, "|ssl session ticket decrypt, key name not match|");
             return -1;
@@ -952,12 +995,15 @@ xqc_ssl_session_ticket_key_cb(SSL *ssl, uint8_t *key_name, uint8_t *iv,
             cipher = EVP_aes_256_cbc();
             size = 32;
         }
-
+        
+        //完整性校验
         if (HMAC_Init_ex(hmac_ctx, key->hmac_key, size, digest, NULL) != 1) {
             xqc_log(tls->log, XQC_LOG_ERROR, "|HMAC_Init_ex() failed|");
             return 0;
         }
-
+        
+        //aes解密
+        //EVP_DecryptInit_ex 用于初始化一个解密上下文（EVP_CIPHER_CTX），以便后续执行解密操作
         if (EVP_DecryptInit_ex(cipher_ctx, cipher, NULL, key->aes_key, iv) != 1) {
             xqc_log(tls->log, XQC_LOG_ERROR, "|EVP_DecryptInit_ex() failed|");
             return 0;
@@ -987,7 +1033,8 @@ xqc_ssl_new_session_cb(SSL *ssl, SSL_SESSION *session)
             xqc_log(tls->log, XQC_LOG_ERROR, "|save new session error|");
             goto end;
         }
-
+        
+        //将session序列化为PEM的结构.
         PEM_write_bio_SSL_SESSION(bio, session);
         size_t data_len = BIO_get_mem_data(bio,  &data);
         if (data_len == 0 || data == NULL) {

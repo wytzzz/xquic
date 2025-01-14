@@ -89,63 +89,100 @@ typedef struct {
 } xqc_preferred_addr_t;
 
 
-/* transport parameters */
+/* transport parameters *//* 传输参数 */
 typedef struct {
+    /* 首选地址，用于服务器向客户端提供备用地址以支持连接迁移 */
     xqc_preferred_addr_t    preferred_address;
+
+    /* 指示是否存在首选地址 */
     uint8_t                 preferred_address_present;
 
+    /* 原始目标连接 ID，用于服务器在重定向连接时标识客户端的初始连接 ID */
     xqc_cid_t               original_dest_connection_id;
+
+    /* 指示是否存在原始目标连接 ID */
     uint8_t                 original_dest_connection_id_present;
 
+    /* 最大空闲超时时间（以微秒为单位）。如果连接在此时间内无活动，则会被关闭 */
     xqc_usec_t              max_idle_timeout;
+
+    /* 无状态重置令牌，用于在连接被无状态重置时标识连接 */
     uint8_t                 stateless_reset_token[XQC_STATELESS_RESET_TOKENLEN];
+
+    /* 指示是否存在无状态重置令牌 */
     uint8_t                 stateless_reset_token_present;
+
+    /* 最大 UDP 负载大小，表示单个 QUIC 数据包的最大大小 */
     uint64_t                max_udp_payload_size;
+
+    /* 初始流量控制窗口，表示连接上允许的最大数据量（以字节为单位） */
     uint64_t                initial_max_data;
+
+    /* 本地双向流的初始最大数据量（以字节为单位） */
     uint64_t                initial_max_stream_data_bidi_local;
+
+    /* 远端双向流的初始最大数据量（以字节为单位） */
     uint64_t                initial_max_stream_data_bidi_remote;
+
+    /* 单向流的初始最大数据量（以字节为单位） */
     uint64_t                initial_max_stream_data_uni;
+
+    /* 双向流的初始最大数量 */
     uint64_t                initial_max_streams_bidi;
+
+    /* 单向流的初始最大数量 */
     uint64_t                initial_max_streams_uni;
+
+    /* ACK 延迟指数，用于缩放 ACK 延迟值（默认值为 3） */
     uint64_t                ack_delay_exponent;
+
+    /* 最大 ACK 延迟（以微秒为单位），表示发送 ACK 的最大延迟时间 */
     xqc_usec_t              max_ack_delay;
+
+    /* 禁用主动迁移标志。如果设置为 1，则禁止连接迁移 */
     xqc_flag_t              disable_active_migration;
+
+    /* 活跃连接 ID 的最大数量 */
     uint64_t                active_connection_id_limit;
 
+    /* 初始源连接 ID，用于标识客户端的初始连接 ID */
     xqc_cid_t               initial_source_connection_id;
+
+    /* 指示是否存在初始源连接 ID */
     uint8_t                 initial_source_connection_id_present;
 
+    /* 重试源连接 ID，用于在重试过程中标识客户端的连接 ID */
     xqc_cid_t               retry_source_connection_id;
+
+    /* 指示是否存在重试源连接 ID */
     uint8_t                 retry_source_connection_id_present;
 
     /* 
-    * support for datagram (RFC 9221).
-    * default: 0, not supported
-    * special: 65535, accept datagram frames with any length in a QUIC packet
-    */
+     * 支持 Datagram（RFC 9221）。
+     * 默认值为 0，表示不支持 Datagram。
+     * 特殊值 65535 表示接受 QUIC 数据包中任意长度的 Datagram 帧。
+     */
     uint64_t                max_datagram_frame_size;
 
     /**
-     * no_crypto is a self-defined experimental transport parameter by xquic, xquic will do no
-     * encryption on 0-RTT or 1-RTT packets if no_crypto is set to be 1.
-     * no_crypto is designed to be effective only on current connection and do not apply to future
-     * connections, it is prohibited to store this parameter.
-     * NOTICE: no_crypto MIGHT be modified or removed as it is not an official parameter.
+     * no_crypto 是 xQUIC 自定义的实验性传输参数。
+     * 如果 no_crypto 设置为 1，则 xQUIC 不会对 0-RTT 或 1-RTT 数据包进行加密。
+     * no_crypto 的作用仅限于当前连接，不适用于未来的连接，禁止存储该参数。
+     * 注意：no_crypto 可能会被修改或移除，因为它不是官方参数。
      */
     uint64_t                no_crypto;
 
     /**
-     * enable_multipath is a self-defined experimental transport parameter by xquic, which will
-     * enable multipath quic if enable_multipath is set to be 1.
-
-     * https://datatracker.ietf.org/doc/html/draft-ietf-quic-multipath-05#section-3
-     * enable_multipath is designed to be effective only on current connection and do not apply to
-     * future connections, storing this parameter and recover on future connections is prohibited.
-     * NOTICE: enable_multipath MIGHT be modified or removed as it is not an official parameter
+     * enable_multipath 是 xQUIC 自定义的实验性传输参数。
+     * 如果 enable_multipath 设置为 1，则启用多路径 QUIC。
+     * 
+     * 参考：https://datatracker.ietf.org/doc/html/draft-ietf-quic-multipath-05#section-3
+     * enable_multipath 的作用仅限于当前连接，不适用于未来的连接，禁止存储该参数。
+     * 注意：enable_multipath 可能会被修改或移除，因为它不是官方参数。
      */
     uint64_t                enable_multipath;
 
-
+    /* 多路径版本，用于指定多路径 QUIC 的版本 */
     xqc_multipath_version_t   multipath_version;
 
 } xqc_transport_params_t;

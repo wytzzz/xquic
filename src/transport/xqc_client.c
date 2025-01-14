@@ -190,6 +190,7 @@ xqc_client_create_tls(xqc_connection_t *conn, const xqc_conn_ssl_config_t *conn_
     }
 
     /* start handshake */
+    //客户端行为,准备好了ssl结构,启动握手.
     ret = xqc_tls_init(conn->tls, conn->version, &conn->original_dcid);
     if (ret != XQC_OK) {
         xqc_log(conn->log, XQC_LOG_ERROR, "|init tls error");
